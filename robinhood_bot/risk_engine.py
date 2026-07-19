@@ -102,3 +102,15 @@ def evaluate_buy(
         return BuyDecision(False, "insufficient cash", max_value)
 
     return BuyDecision(True, "approved", max_value)
+
+
+@dataclass
+class SellDecision:
+    approved: bool
+    reason: str
+
+
+def evaluate_sell(state: PortfolioState, symbol: str) -> SellDecision:
+    if state.is_held(symbol):
+        return SellDecision(True, "approved")
+    return SellDecision(False, "symbol not currently held")

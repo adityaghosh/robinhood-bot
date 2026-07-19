@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import pytest
 
 from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
-from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position, max_new_position_value, circuit_breaker_tripped, evaluate_buy
+from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position, max_new_position_value, circuit_breaker_tripped, evaluate_buy, evaluate_sell
 
 
 def _position(**overrides):
@@ -170,3 +170,25 @@ def test_evaluate_buy_approves_happy_path():
     decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg)
     assert decision.approved is True
     assert decision.max_position_value == 2_000.0
+
+
+def test_evaluate_sell_approves_active_holding():
+    state = PortfolioState(cash=0.0, active_positions=[
+        Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
+    ])
+    decision = evaluate_sell(state, "AAPL")
+    assert decision.approved is True
+
+
+def test_evaluate_sell_approves_long_hold_holding():
+    state = PortfolioState(cash=0.0, long_hold_positions=[
+        Position("TSLA", 5, 200.0, date(2026, 6, 1), PositionStatus.LONG_HOLD)
+    ])
+    decision = evaluate_sell(state, "TSLA")
+    assert decision.approved is True
+
+
+def test_evaluate_sell_rejects_unheld_symbol():
+    state = PortfolioState(cash=0.0)
+    decision = evaluate_sell(state, "NFLX")
+    assert decision.approved is False
