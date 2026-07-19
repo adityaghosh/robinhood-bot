@@ -191,7 +191,8 @@ equivalents, all parameterized by `--run RUN_ID --asof <simulated date>`:
   "<quotes from Step 4>"`.
 - **Steps 7-8 (gate and execute):** `python -m robinhood_bot.cli backtest
   risk-check {buy|sell} SYMBOL --run RUN_ID --asof <simulated date>
-  --prices-json "<quotes>"`, then on approval, `python -m robinhood_bot.cli
+  --value <proposed dollar amount, for buys> --prices-json "<quotes>"`,
+  then on approval, `python -m robinhood_bot.cli
   backtest record-fill {buy|sell} SYMBOL --run RUN_ID --asof <simulated
   date> --qty <n> --price <quote price> --reason "<why>"`. There is no
   live-order-placement call in this mode, ever.
