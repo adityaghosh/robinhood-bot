@@ -1,3 +1,4 @@
+import csv
 from datetime import date
 
 import pytest
@@ -157,3 +158,54 @@ def test_rank_candidates_as_of_skips_symbols_with_insufficient_history(tmp_path)
     )
 
     assert ranked == ["OLD"]
+
+
+def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
+    bars = {
+        "A": [
+            HistoricalBar(date(2025, 12, 31), 98.0, 99.5, 97.5, 99.0),
+            HistoricalBar(date(2026, 1, 2), 99.0, 100.5, 98.5, 100.0),
+            HistoricalBar(date(2026, 1, 5), 106.0, 109.0, 105.0, 108.0),
+        ],
+        "SPY": [
+            HistoricalBar(date(2026, 1, 2), 400.0, 401.0, 399.0, 400.0),
+            HistoricalBar(date(2026, 1, 5), 402.0, 404.0, 401.0, 403.0),
+        ],
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars[symbol] if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, stop_loss_pct=0.05, profit_target_pct=0.08,
+        max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
+    )
+
+    result = backtest_commands.cmd_backtest_run(
+        "run1", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 1), end=date(2026, 1, 5),
+        candidate_symbols=["A"], store=store, cfg=cfg,
+    )
+
+    assert result["trading_days"] == 2
+
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+    assert final_state.active_positions[0].symbol == "A"
+    assert final_state.active_positions[0].qty == 48
+    assert final_state.active_positions[0].entry_price == 108.0
+    assert final_state.cash == pytest.approx(5_216.0)
+    assert final_state.month == "2026-01"
+    assert final_state.month_start_equity == pytest.approx(10_000.0)
+
+    with paths.trade_log.open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["action"] for r in rows] == ["BUY", "SELL", "BUY"]
+
+    with paths.equity_curve.open() as f:
+        equity_rows = list(csv.DictReader(f))
+    assert equity_rows[0]["date"] == "2026-01-02"
+    assert float(equity_rows[0]["total_equity"]) == pytest.approx(10_000.0)
+    assert equity_rows[1]["date"] == "2026-01-05"
+    assert float(equity_rows[1]["total_equity"]) == pytest.approx(10_400.0)
