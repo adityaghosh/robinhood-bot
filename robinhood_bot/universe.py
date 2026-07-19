@@ -134,3 +134,43 @@ def percentile_ranks(values: dict[str, float]) -> dict[str, float]:
     if n == 1:
         return {ordered[0]: 1.0}
     return {symbol: i / (n - 1) for i, symbol in enumerate(ordered)}
+
+
+def refresh_membership(client: MarketDataClient, cfg: UniverseConfig) -> list[CachedMember]:
+    sp500 = client.fetch_sp500_tickers()
+    nasdaq = client.fetch_nasdaq100_tickers()
+    all_tickers = sorted(set(sp500) | set(nasdaq))
+    market_caps = client.fetch_market_caps(all_tickers)
+
+    top_sp500 = rank_top_by_market_cap(sp500, market_caps, cfg.top_n_sp500)
+    top_nasdaq = rank_top_by_market_cap(nasdaq, market_caps, cfg.top_n_nasdaq100)
+
+    members: dict[str, CachedMember] = {}
+    for ticker in top_sp500:
+        members[ticker] = CachedMember(ticker, "sp500", market_caps[ticker])
+    for ticker in top_nasdaq:
+        if ticker not in members:
+            members[ticker] = CachedMember(ticker, "nasdaq100", market_caps[ticker])
+    return list(members.values())
+
+
+def get_membership(
+    client: MarketDataClient,
+    cache_path: Path,
+    cfg: UniverseConfig,
+    today: date,
+    force_refresh: bool = False,
+) -> list[CachedMember]:
+    cache = load_cache(cache_path)
+    if not force_refresh and not is_cache_stale(cache, today, cfg.cache_max_age_days):
+        return cache.members
+
+    try:
+        members = refresh_membership(client, cfg)
+    except Exception:
+        if cache is not None:
+            return cache.members
+        raise
+
+    save_cache(cache_path, UniverseCache(fetched_at=today, members=members))
+    return members

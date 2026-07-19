@@ -159,3 +159,115 @@ def test_percentile_ranks_single_entry_is_one():
 def test_percentile_ranks_orders_ascending():
     result = percentile_ranks({"A": 1.0, "B": 3.0, "C": 2.0})
     assert result == {"A": 0.0, "C": 0.5, "B": 1.0}
+
+
+from robinhood_bot.universe import get_membership, refresh_membership
+
+
+class FakeMarketDataClient:
+    def __init__(self, sp500=None, nasdaq100=None, market_caps=None, bars=None, raise_on_fetch=False):
+        self.sp500 = sp500 or []
+        self.nasdaq100 = nasdaq100 or []
+        self.market_caps = market_caps or {}
+        self.bars = bars or {}
+        self.raise_on_fetch = raise_on_fetch
+        self.calls = []
+
+    def fetch_sp500_tickers(self):
+        self.calls.append("sp500")
+        if self.raise_on_fetch:
+            raise RuntimeError("network error")
+        return self.sp500
+
+    def fetch_nasdaq100_tickers(self):
+        self.calls.append("nasdaq100")
+        if self.raise_on_fetch:
+            raise RuntimeError("network error")
+        return self.nasdaq100
+
+    def fetch_market_caps(self, tickers):
+        self.calls.append("market_caps")
+        return {t: self.market_caps[t] for t in tickers if t in self.market_caps}
+
+    def fetch_daily_bars(self, ticker, lookback_days):
+        self.calls.append(f"bars:{ticker}")
+        return self.bars.get(ticker, [])
+
+
+def test_refresh_membership_dedupes_overlap_preferring_sp500_category():
+    client = FakeMarketDataClient(
+        sp500=["A", "B", "C"],
+        nasdaq100=["C", "D"],
+        market_caps={"A": 100.0, "B": 300.0, "C": 200.0, "D": 50.0},
+    )
+    cfg = UniverseConfig(top_n_sp500=2, top_n_nasdaq100=2)
+
+    members = refresh_membership(client, cfg)
+
+    by_symbol = {m.symbol: m for m in members}
+    assert set(by_symbol) == {"B", "C", "D"}
+    assert by_symbol["C"].category == "sp500"
+    assert by_symbol["B"].market_cap == 300.0
+
+
+def test_get_membership_returns_cached_members_without_network_when_fresh(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    today = date(2026, 7, 19)
+    save_cache(cache_path, UniverseCache(fetched_at=today, members=[CachedMember("AAPL", "sp500", 3.0e12)]))
+    client = FakeMarketDataClient()
+    cfg = UniverseConfig(cache_max_age_days=7)
+
+    members = get_membership(client, cache_path, cfg, today, force_refresh=False)
+
+    assert [m.symbol for m in members] == ["AAPL"]
+    assert client.calls == []
+
+
+def test_get_membership_refreshes_and_saves_when_cache_missing(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    today = date(2026, 7, 19)
+    client = FakeMarketDataClient(sp500=["A", "B"], nasdaq100=[], market_caps={"A": 100.0, "B": 300.0})
+    cfg = UniverseConfig(top_n_sp500=2, top_n_nasdaq100=2)
+
+    members = get_membership(client, cache_path, cfg, today, force_refresh=False)
+
+    assert {m.symbol for m in members} == {"A", "B"}
+    reloaded = load_cache(cache_path)
+    assert reloaded.fetched_at == today
+    assert {m.symbol for m in reloaded.members} == {"A", "B"}
+
+
+def test_get_membership_force_refresh_ignores_fresh_cache(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    today = date(2026, 7, 19)
+    save_cache(cache_path, UniverseCache(fetched_at=today, members=[CachedMember("OLD", "sp500", 1.0)]))
+    client = FakeMarketDataClient(sp500=["NEW"], nasdaq100=[], market_caps={"NEW": 500.0})
+    cfg = UniverseConfig(top_n_sp500=1, top_n_nasdaq100=1)
+
+    members = get_membership(client, cache_path, cfg, today, force_refresh=True)
+
+    assert [m.symbol for m in members] == ["NEW"]
+    assert "sp500" in client.calls
+
+
+def test_get_membership_falls_back_to_existing_cache_on_fetch_failure(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    stale_date = date(2026, 7, 1)
+    today = date(2026, 7, 19)
+    save_cache(cache_path, UniverseCache(fetched_at=stale_date, members=[CachedMember("OLD", "sp500", 1.0)]))
+    client = FakeMarketDataClient(raise_on_fetch=True)
+    cfg = UniverseConfig(cache_max_age_days=7)
+
+    members = get_membership(client, cache_path, cfg, today, force_refresh=False)
+
+    assert [m.symbol for m in members] == ["OLD"]
+
+
+def test_get_membership_raises_on_fetch_failure_with_no_cache(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    today = date(2026, 7, 19)
+    client = FakeMarketDataClient(raise_on_fetch=True)
+    cfg = UniverseConfig()
+
+    with pytest.raises(RuntimeError):
+        get_membership(client, cache_path, cfg, today, force_refresh=False)
