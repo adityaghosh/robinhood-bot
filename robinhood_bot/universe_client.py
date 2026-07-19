@@ -42,6 +42,11 @@ class LiveMarketDataClient:
         market_caps: dict[str, float] = {}
         for ticker in tickers:
             try:
+                # NOTE: fast_info has no project-controlled timeout knob --
+                # yf.Ticker() doesn't accept a timeout kwarg, and internally
+                # fast_info's data fetches (yfinance.data.YfData.get) default
+                # to a hardcoded 30s timeout with no way to override it from
+                # this call site. Documented limitation, not an oversight.
                 info = yf.Ticker(ticker).fast_info
                 market_cap = info.get("market_cap") or info.get("marketCap")
             except Exception:
@@ -51,7 +56,12 @@ class LiveMarketDataClient:
         return market_caps
 
     def fetch_daily_bars(self, ticker: str, lookback_days: int) -> list[Bar]:
-        history = yf.Ticker(ticker).history(period=f"{lookback_days + 5}d")
+        try:
+            history = yf.Ticker(ticker).history(
+                period=f"{lookback_days + 5}d", timeout=15
+            )
+        except Exception:
+            return []
         if history.empty:
             return []
         bars = [
