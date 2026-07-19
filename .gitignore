@@ -2,4 +2,5 @@
 __pycache__/
 *.pyc
 data/*.csv
+data/*.json
 .pytest_cache/
