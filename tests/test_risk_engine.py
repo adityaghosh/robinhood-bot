@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 
 from robinhood_bot.portfolio_state import Position, PositionStatus
-from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position
+from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position, max_new_position_value
 
 
 def _position(**overrides):
@@ -77,3 +77,27 @@ def test_recovery_from_waiting_returns_to_active():
     assert result.action == ExitAction.HOLD
     assert result.new_status == PositionStatus.ACTIVE
     assert result.new_underwater_since is None
+
+
+def test_max_position_value_at_zero_long_hold_utilization():
+    cfg = RiskConfig(max_position_pct=0.20, min_position_pct=0.05, long_hold_capital_cap_pct=0.30)
+    value = max_new_position_value(total_equity=10_000.0, long_hold_capital=0.0, cfg=cfg)
+    assert value == 2_000.0
+
+
+def test_max_position_value_at_full_long_hold_utilization():
+    cfg = RiskConfig(max_position_pct=0.20, min_position_pct=0.05, long_hold_capital_cap_pct=0.30)
+    value = max_new_position_value(total_equity=10_000.0, long_hold_capital=3_000.0, cfg=cfg)
+    assert value == 500.0
+
+
+def test_max_position_value_at_half_long_hold_utilization():
+    cfg = RiskConfig(max_position_pct=0.20, min_position_pct=0.05, long_hold_capital_cap_pct=0.30)
+    value = max_new_position_value(total_equity=10_000.0, long_hold_capital=1_500.0, cfg=cfg)
+    assert value == 1_250.0
+
+
+def test_max_position_value_zero_equity_returns_zero():
+    cfg = RiskConfig()
+    value = max_new_position_value(total_equity=0.0, long_hold_capital=0.0, cfg=cfg)
+    assert value == 0.0

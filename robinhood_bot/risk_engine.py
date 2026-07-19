@@ -48,3 +48,12 @@ def evaluate_position(
         return PositionEvaluation(ExitAction.HOLD, PositionStatus.WAITING, underwater_since)
 
     return PositionEvaluation(ExitAction.HOLD, PositionStatus.ACTIVE, None)
+
+
+def max_new_position_value(
+    total_equity: float, long_hold_capital: float, cfg: RiskConfig
+) -> float:
+    cap = cfg.long_hold_capital_cap_pct * total_equity
+    utilization = 0.0 if cap <= 0 else min(long_hold_capital / cap, 1.0)
+    pct = cfg.max_position_pct - (cfg.max_position_pct - cfg.min_position_pct) * utilization
+    return round(pct * total_equity, 2)
