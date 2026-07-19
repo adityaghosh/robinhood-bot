@@ -13,6 +13,15 @@ from robinhood_bot.universe import (
     load_cache,
     save_cache,
 )
+from robinhood_bot.universe_client import clean_ticker_for_yfinance
+
+
+def test_clean_ticker_for_yfinance_converts_dot_to_dash():
+    assert clean_ticker_for_yfinance("BRK.B") == "BRK-B"
+
+
+def test_clean_ticker_for_yfinance_leaves_plain_ticker_unchanged():
+    assert clean_ticker_for_yfinance("AAPL") == "AAPL"
 
 
 def test_universe_config_defaults():
