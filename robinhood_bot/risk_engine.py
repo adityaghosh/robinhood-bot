@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 
-from .portfolio_state import Position, PositionStatus
+from .portfolio_state import Position, PositionStatus, PortfolioState
 
 
 @dataclass
@@ -57,3 +57,48 @@ def max_new_position_value(
     utilization = 0.0 if cap <= 0 else min(long_hold_capital / cap, 1.0)
     pct = cfg.max_position_pct - (cfg.max_position_pct - cfg.min_position_pct) * utilization
     return pct * total_equity
+
+
+def circuit_breaker_tripped(
+    month_start_equity: float, current_equity: float, cfg: RiskConfig
+) -> bool:
+    if month_start_equity <= 0:
+        return False
+    drawdown = (month_start_equity - current_equity) / month_start_equity
+    return drawdown >= cfg.monthly_circuit_breaker_pct
+
+
+@dataclass
+class BuyDecision:
+    approved: bool
+    reason: str
+    max_position_value: float
+
+
+def evaluate_buy(
+    state: PortfolioState,
+    symbol: str,
+    proposed_value: float,
+    total_equity: float,
+    cfg: RiskConfig,
+) -> BuyDecision:
+    max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
+
+    if state.is_held(symbol):
+        return BuyDecision(False, "symbol already held", max_value)
+
+    if circuit_breaker_tripped(state.month_start_equity, total_equity, cfg):
+        return BuyDecision(False, "monthly circuit breaker tripped", max_value)
+
+    if state.active_slot_count() >= cfg.max_active_positions:
+        return BuyDecision(False, "no active slots available", max_value)
+
+    if proposed_value > max_value:
+        return BuyDecision(
+            False, f"proposed value exceeds max position size of {max_value:.2f}", max_value
+        )
+
+    if proposed_value > state.cash:
+        return BuyDecision(False, "insufficient cash", max_value)
+
+    return BuyDecision(True, "approved", max_value)

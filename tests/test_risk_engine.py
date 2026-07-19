@@ -3,8 +3,8 @@ from datetime import date, timedelta
 
 import pytest
 
-from robinhood_bot.portfolio_state import Position, PositionStatus
-from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position, max_new_position_value
+from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
+from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position, max_new_position_value, circuit_breaker_tripped, evaluate_buy
 
 
 def _position(**overrides):
@@ -103,3 +103,70 @@ def test_max_position_value_zero_equity_returns_zero():
     cfg = RiskConfig()
     value = max_new_position_value(total_equity=0.0, long_hold_capital=0.0, cfg=cfg)
     assert value == pytest.approx(0.0)
+
+
+def test_circuit_breaker_not_tripped_below_threshold():
+    cfg = RiskConfig(monthly_circuit_breaker_pct=0.10)
+    assert circuit_breaker_tripped(month_start_equity=10_000.0, current_equity=9_500.0, cfg=cfg) is False
+
+
+def test_circuit_breaker_tripped_at_threshold():
+    cfg = RiskConfig(monthly_circuit_breaker_pct=0.10)
+    assert circuit_breaker_tripped(month_start_equity=10_000.0, current_equity=9_000.0, cfg=cfg) is True
+
+
+def test_circuit_breaker_ignored_when_month_start_equity_zero():
+    cfg = RiskConfig()
+    assert circuit_breaker_tripped(month_start_equity=0.0, current_equity=9_000.0, cfg=cfg) is False
+
+
+def test_evaluate_buy_rejects_when_symbol_already_held():
+    cfg = RiskConfig()
+    state = PortfolioState(cash=10_000.0, active_positions=[
+        Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
+    ])
+    decision = evaluate_buy(state, "AAPL", proposed_value=500.0, total_equity=10_000.0, cfg=cfg)
+    assert decision.approved is False
+    assert "already held" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_circuit_breaker_tripped():
+    cfg = RiskConfig(monthly_circuit_breaker_pct=0.10)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=8_000.0, cfg=cfg)
+    assert decision.approved is False
+    assert "circuit breaker" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_no_active_slots():
+    cfg = RiskConfig(max_active_positions=1)
+    state = PortfolioState(cash=10_000.0, active_positions=[
+        Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
+    ])
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg)
+    assert decision.approved is False
+    assert "slots" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_oversized():
+    cfg = RiskConfig(max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0)
+    decision = evaluate_buy(state, "MSFT", proposed_value=5_000.0, total_equity=10_000.0, cfg=cfg)
+    assert decision.approved is False
+    assert "exceeds max position size" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_insufficient_cash():
+    cfg = RiskConfig(max_position_pct=0.50)
+    state = PortfolioState(cash=1_000.0)
+    decision = evaluate_buy(state, "MSFT", proposed_value=2_000.0, total_equity=10_000.0, cfg=cfg)
+    assert decision.approved is False
+    assert "insufficient cash" in decision.reason
+
+
+def test_evaluate_buy_approves_happy_path():
+    cfg = RiskConfig(max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg)
+    assert decision.approved is True
+    assert decision.max_position_value == 2_000.0
