@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from robinhood_bot.universe import (
     Bar,
@@ -6,6 +7,8 @@ from robinhood_bot.universe import (
     Candidate,
     UniverseCache,
     UniverseConfig,
+    load_cache,
+    save_cache,
 )
 
 
@@ -50,3 +53,26 @@ def test_candidate_fields():
     )
     assert candidate.symbol == "AAPL"
     assert candidate.combined_rank == 0.9
+
+
+def test_load_cache_returns_none_when_file_missing(tmp_path):
+    path = tmp_path / "universe_cache.json"
+    assert load_cache(path) is None
+
+
+def test_save_and_load_cache_round_trip(tmp_path):
+    path = tmp_path / "universe_cache.json"
+    original = UniverseCache(
+        fetched_at=date(2026, 7, 19),
+        members=[
+            CachedMember("AAPL", "sp500", 3.0e12),
+            CachedMember("TQQQ", "leveraged", 0.0),
+        ],
+    )
+    save_cache(path, original)
+    loaded = load_cache(path)
+
+    assert loaded.fetched_at == date(2026, 7, 19)
+    assert loaded.members[0].symbol == "AAPL"
+    assert loaded.members[0].market_cap == 3.0e12
+    assert loaded.members[1].symbol == "TQQQ"

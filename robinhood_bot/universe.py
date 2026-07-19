@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Protocol
 
 
@@ -51,3 +53,38 @@ class MarketDataClient(Protocol):
     def fetch_nasdaq100_tickers(self) -> list[str]: ...
     def fetch_market_caps(self, tickers: list[str]) -> dict[str, float]: ...
     def fetch_daily_bars(self, ticker: str, lookback_days: int) -> list[Bar]: ...
+
+
+def _cached_member_to_dict(member: CachedMember) -> dict:
+    return {"symbol": member.symbol, "category": member.category, "market_cap": member.market_cap}
+
+
+def _cached_member_from_dict(data: dict) -> CachedMember:
+    return CachedMember(symbol=data["symbol"], category=data["category"], market_cap=data["market_cap"])
+
+
+def cache_to_dict(cache: UniverseCache) -> dict:
+    return {
+        "fetched_at": cache.fetched_at.isoformat(),
+        "members": [_cached_member_to_dict(m) for m in cache.members],
+    }
+
+
+def cache_from_dict(data: dict) -> UniverseCache:
+    return UniverseCache(
+        fetched_at=date.fromisoformat(data["fetched_at"]),
+        members=[_cached_member_from_dict(m) for m in data["members"]],
+    )
+
+
+def load_cache(path: Path) -> UniverseCache | None:
+    if not path.exists():
+        return None
+    with path.open("r") as f:
+        return cache_from_dict(json.load(f))
+
+
+def save_cache(path: Path, cache: UniverseCache) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(cache_to_dict(cache), f, indent=2)
