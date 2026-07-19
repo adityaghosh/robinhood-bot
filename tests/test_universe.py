@@ -91,3 +91,18 @@ def test_is_cache_stale_at_exact_max_age_is_not_stale():
 def test_is_cache_stale_past_max_age_is_stale():
     cache = UniverseCache(fetched_at=date(2026, 7, 11), members=[])
     assert is_cache_stale(cache, today=date(2026, 7, 19), max_age_days=7) is True
+
+
+from robinhood_bot.universe import rank_top_by_market_cap
+
+
+def test_rank_top_by_market_cap_orders_descending_and_truncates():
+    tickers = ["A", "B", "C"]
+    market_caps = {"A": 100.0, "B": 300.0, "C": 200.0}
+    assert rank_top_by_market_cap(tickers, market_caps, top_n=2) == ["B", "C"]
+
+
+def test_rank_top_by_market_cap_excludes_tickers_without_market_cap():
+    tickers = ["A", "B", "D"]
+    market_caps = {"A": 100.0, "B": 300.0}
+    assert rank_top_by_market_cap(tickers, market_caps, top_n=5) == ["B", "A"]

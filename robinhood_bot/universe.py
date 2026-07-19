@@ -94,3 +94,9 @@ def is_cache_stale(cache: UniverseCache | None, today: date, max_age_days: int) 
     if cache is None:
         return True
     return (today - cache.fetched_at).days > max_age_days
+
+
+def rank_top_by_market_cap(tickers: list[str], market_caps: dict[str, float], top_n: int) -> list[str]:
+    known = [t for t in tickers if t in market_caps]
+    known.sort(key=lambda t: market_caps[t], reverse=True)
+    return known[:top_n]
