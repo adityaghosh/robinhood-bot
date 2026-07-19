@@ -14,6 +14,12 @@ All `cli.py` commands below assume the project's virtualenv is active
 (`python -m robinhood_bot.cli ...`). If it isn't, activate it first
 (`.venv\Scripts\activate` on Windows).
 
+On Windows PowerShell, native commands strip inner double quotes, so any
+non-empty `--prices-json` value needs its inner quotes backslash-escaped,
+e.g. `--prices-json '{\"AAPL\": 189.50, \"MSFT\": 310.25}'`. The empty
+`--prices-json "{}"` used in Step 1 has no inner quotes to strip, so it
+works as-is.
+
 ## Step 1 — Read mode & current holdings
 
 ```
@@ -86,7 +92,12 @@ For each shortlisted symbol **not currently held**:
 
 ## Step 7 — Gate every proposed BUY/SELL
 
-For every proposed trade, before doing anything else:
+For every proposed trade, before doing anything else, run its risk-check
+and then execute it (Step 8) before moving to the next proposed trade.
+Don't batch all of a cycle's risk-checks ahead of execution — the
+slot-cap check reads live ledger state, so each buy's risk-check must
+run immediately before that specific buy executes, reflecting any buys
+already executed earlier in this same cycle.
 
 ```
 python -m robinhood_bot.cli risk-check buy SYMBOL --value <proposed dollar amount> --prices-json "<fresh quotes>"
