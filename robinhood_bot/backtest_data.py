@@ -74,3 +74,48 @@ def save_symbol_cache(path: Path, cache: SymbolCache) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
         json.dump(_cache_to_dict(cache), f, indent=2)
+
+
+class HistoricalPriceStore:
+    def __init__(self, fetcher: HistoricalDataFetcher, cache_dir: Path):
+        self._fetcher = fetcher
+        self._cache_dir = cache_dir
+        self._bars: dict[str, dict[date, HistoricalBar]] = {}
+        self._ranges: dict[str, tuple[date, date] | None] = {}
+
+    def _cache_path(self, symbol: str) -> Path:
+        return self._cache_dir / f"{symbol}.json"
+
+    def _ensure_range(self, symbol: str, start: date, end: date) -> None:
+        if symbol not in self._bars:
+            cache = load_symbol_cache(self._cache_path(symbol))
+            if cache is not None:
+                self._bars[symbol] = {b.date: b for b in cache.bars}
+                self._ranges[symbol] = (cache.start, cache.end)
+            else:
+                self._bars[symbol] = {}
+                self._ranges[symbol] = None
+
+        cached_range = self._ranges[symbol]
+        if cached_range is not None and cached_range[0] <= start and end <= cached_range[1]:
+            return
+
+        fetch_start = min(start, cached_range[0]) if cached_range else start
+        fetch_end = max(end, cached_range[1]) if cached_range else end
+
+        for bar in self._fetcher.fetch_history(symbol, fetch_start, fetch_end):
+            self._bars[symbol][bar.date] = bar
+        self._ranges[symbol] = (fetch_start, fetch_end)
+
+        save_symbol_cache(
+            self._cache_path(symbol),
+            SymbolCache(start=fetch_start, end=fetch_end, bars=list(self._bars[symbol].values())),
+        )
+
+    def get_ohlc(self, symbol: str, on: date) -> HistoricalBar | None:
+        self._ensure_range(symbol, on, on)
+        return self._bars[symbol].get(on)
+
+    def get_close(self, symbol: str, on: date) -> float | None:
+        bar = self.get_ohlc(symbol, on)
+        return bar.close if bar else None
