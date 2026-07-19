@@ -120,6 +120,11 @@ def cmd_record_fill(
         position = state.find_active(symbol) or state.find_long_hold(symbol)
         if position is None:
             raise ValueError(f"{symbol} not currently held")
+        if qty != position.qty:
+            raise ValueError(
+                f"sell qty {qty} does not match held qty {position.qty} for {symbol} "
+                "(partial sells are not supported)"
+            )
         state.cash += position.qty * price
         if position in state.active_positions:
             state.active_positions.remove(position)
