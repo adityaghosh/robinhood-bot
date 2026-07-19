@@ -174,3 +174,52 @@ def get_membership(
 
     save_cache(cache_path, UniverseCache(fetched_at=today, members=members))
     return members
+
+
+def build_universe(
+    client: MarketDataClient,
+    cache_path: Path,
+    cfg: UniverseConfig,
+    today: date,
+    force_refresh: bool = False,
+) -> list[Candidate]:
+    members = get_membership(client, cache_path, cfg, today, force_refresh)
+    leveraged = [CachedMember(symbol, "leveraged", 0.0) for symbol in cfg.leveraged_funds]
+    all_members = members + leveraged
+
+    lookback = max(cfg.realized_vol_window_days, cfg.atr_window_days) + 1
+    realized_vols: dict[str, float] = {}
+    atr_pcts: dict[str, float] = {}
+
+    for member in all_members:
+        bars = client.fetch_daily_bars(member.symbol, lookback)
+        if not bars:
+            continue
+        closes = [bar.close for bar in bars]
+        realized_vols[member.symbol] = realized_volatility(closes[-(cfg.realized_vol_window_days + 1):])
+        atr_pcts[member.symbol] = average_true_range_pct(bars[-(cfg.atr_window_days + 1):])
+
+    vol_ranks = percentile_ranks(realized_vols)
+    atr_ranks = percentile_ranks(atr_pcts)
+
+    candidates = []
+    for member in all_members:
+        if member.symbol not in realized_vols:
+            continue
+        if cfg.ranking_mode == "realized_vol":
+            score = vol_ranks[member.symbol]
+        elif cfg.ranking_mode == "atr_pct":
+            score = atr_ranks[member.symbol]
+        else:
+            score = (vol_ranks[member.symbol] + atr_ranks[member.symbol]) / 2
+        candidates.append(Candidate(
+            symbol=member.symbol,
+            category=member.category,
+            market_cap=member.market_cap,
+            realized_vol=realized_vols[member.symbol],
+            atr_pct=atr_pcts[member.symbol],
+            combined_rank=score,
+        ))
+
+    candidates.sort(key=lambda c: c.combined_rank, reverse=True)
+    return candidates
