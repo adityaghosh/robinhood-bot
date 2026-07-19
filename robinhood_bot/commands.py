@@ -5,6 +5,7 @@ from pathlib import Path
 
 from . import ledger
 from .portfolio_state import roll_month_if_needed
+from .risk_engine import RiskConfig, evaluate_buy, evaluate_sell
 
 
 def _position_value(position, prices: dict[str, float]) -> tuple[float, bool]:
@@ -53,3 +54,34 @@ def cmd_state(ledger_path: Path, starting_cash: float, prices: dict[str, float],
             else 0.0
         ),
     }
+
+
+def cmd_risk_check(
+    ledger_path: Path,
+    starting_cash: float,
+    action: str,
+    symbol: str,
+    proposed_value: float,
+    prices: dict[str, float],
+    cfg: RiskConfig,
+) -> dict:
+    state = ledger.load_state(ledger_path, starting_cash)
+
+    positions_value = sum(
+        prices.get(p.symbol, p.entry_price) * p.qty
+        for p in state.active_positions + state.long_hold_positions
+    )
+    total_equity = state.cash + positions_value
+
+    if action == "buy":
+        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg)
+        return {
+            "approved": decision.approved,
+            "reason": decision.reason,
+            "max_position_value": decision.max_position_value,
+        }
+    if action == "sell":
+        decision = evaluate_sell(state, symbol)
+        return {"approved": decision.approved, "reason": decision.reason}
+
+    raise ValueError(f"unknown action: {action}")
