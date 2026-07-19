@@ -53,3 +53,11 @@ class PortfolioState:
 
     def long_hold_capital(self) -> float:
         return sum(position.cost_basis for position in self.long_hold_positions)
+
+
+def roll_month_if_needed(state: PortfolioState, today: date, current_equity: float) -> PortfolioState:
+    current_month = f"{today.year:04d}-{today.month:02d}"
+    if state.month != current_month:
+        state.month = current_month
+        state.month_start_equity = current_equity
+    return state

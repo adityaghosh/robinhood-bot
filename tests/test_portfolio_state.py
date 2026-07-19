@@ -1,6 +1,6 @@
 from datetime import date
 
-from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
+from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState, roll_month_if_needed
 
 
 def test_new_portfolio_has_no_positions():
@@ -40,3 +40,17 @@ def test_long_hold_capital_sums_cost_basis():
         Position("NFLX", 2, 400.0, date(2026, 6, 5), PositionStatus.LONG_HOLD),
     ])
     assert state.long_hold_capital() == 5 * 200.0 + 2 * 400.0
+
+
+def test_roll_month_if_needed_updates_on_new_month():
+    state = PortfolioState(cash=10_000.0, month="2026-06", month_start_equity=9_000.0)
+    roll_month_if_needed(state, today=date(2026, 7, 1), current_equity=9_500.0)
+    assert state.month == "2026-07"
+    assert state.month_start_equity == 9_500.0
+
+
+def test_roll_month_if_needed_no_change_within_same_month():
+    state = PortfolioState(cash=10_000.0, month="2026-07", month_start_equity=9_500.0)
+    roll_month_if_needed(state, today=date(2026, 7, 15), current_equity=11_000.0)
+    assert state.month == "2026-07"
+    assert state.month_start_equity == 9_500.0
