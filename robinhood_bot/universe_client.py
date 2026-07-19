@@ -1,6 +1,9 @@
 # robinhood_bot/universe_client.py
 from __future__ import annotations
 
+import io
+import urllib.request
+
 import pandas as pd
 import yfinance as yf
 
@@ -14,14 +17,24 @@ def clean_ticker_for_yfinance(symbol: str) -> str:
     return symbol.replace(".", "-")
 
 
+def _fetch_html(url: str) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return response.read().decode("utf-8")
+
+
 class LiveMarketDataClient:
     def fetch_sp500_tickers(self) -> list[str]:
-        tables = pd.read_html(SP500_WIKI_URL)
+        # NOTE: pd.read_html must receive a file-like object (io.StringIO),
+        # not a raw str -- lxml's parse() treats a plain str argument as a
+        # filename/URL rather than literal HTML content, raising
+        # FileNotFoundError on the full page markup.
+        tables = pd.read_html(io.StringIO(_fetch_html(SP500_WIKI_URL)))
         symbols = tables[0]["Symbol"].tolist()
         return [clean_ticker_for_yfinance(s) for s in symbols]
 
     def fetch_nasdaq100_tickers(self) -> list[str]:
-        tables = pd.read_html(NASDAQ100_WIKI_URL)
+        tables = pd.read_html(io.StringIO(_fetch_html(NASDAQ100_WIKI_URL)))
         tickers = tables[0]["Ticker"].tolist()
         return [clean_ticker_for_yfinance(t) for t in tickers]
 
