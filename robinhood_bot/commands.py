@@ -30,7 +30,13 @@ def _position_summary(position, prices: dict[str, float]) -> dict:
     }
 
 
-def cmd_state(ledger_path: Path, starting_cash: float, prices: dict[str, float], today: date) -> dict:
+def cmd_state(
+    ledger_path: Path,
+    starting_cash: float,
+    prices: dict[str, float],
+    today: date,
+    trading_mode: str,
+) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
 
     active_out = [_position_summary(p, prices) for p in state.active_positions]
@@ -42,6 +48,7 @@ def cmd_state(ledger_path: Path, starting_cash: float, prices: dict[str, float],
     ledger.save_state(ledger_path, state)
 
     return {
+        "trading_mode": trading_mode,
         "cash": state.cash,
         "active_positions": active_out,
         "long_hold_positions": long_hold_out,
