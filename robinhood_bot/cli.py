@@ -16,6 +16,7 @@ LEDGER_PATH = Path("data/ledger.json")
 TRADE_LOG_PATH = Path("data/trade_log.csv")
 UNIVERSE_CACHE_PATH = Path("data/universe_cache.json")
 STARTING_CASH = 10_000.0
+TRADING_MODE = "paper"
 
 
 def _parse_prices(raw: str | None) -> dict[str, float]:
@@ -56,7 +57,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RiskConfig()
 
     if args.command == "state":
-        result = commands.cmd_state(LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today)
+        result = commands.cmd_state(
+            LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE
+        )
     elif args.command == "risk-check":
         result = commands.cmd_risk_check(
             LEDGER_PATH, STARTING_CASH, args.action, args.symbol, args.value,

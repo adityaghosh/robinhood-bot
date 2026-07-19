@@ -15,6 +15,18 @@ def test_cli_state_command_prints_json(tmp_path, monkeypatch, capsys):
     assert output["active_positions"] == []
 
 
+def test_cli_state_command_includes_trading_mode(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "LEDGER_PATH", tmp_path / "ledger.json")
+    monkeypatch.setattr(cli, "TRADE_LOG_PATH", tmp_path / "trade_log.csv")
+    monkeypatch.setattr(cli, "TRADING_MODE", "live")
+
+    exit_code = cli.main(["state", "--prices-json", "{}"])
+
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["trading_mode"] == "live"
+
+
 def test_cli_universe_command_prints_json(monkeypatch, capsys):
     fake_candidates = [
         universe.Candidate("AAPL", "sp500", 3.0e12, 0.25, 0.02, 1.0),
