@@ -72,14 +72,18 @@ def test_get_close_returns_none_for_missing_date(tmp_path):
     assert store.get_close("AAPL", date(2026, 1, 3)) is None
 
 
-def test_repeated_query_within_cached_range_does_not_refetch(tmp_path):
+def test_repeated_query_for_same_date_does_not_refetch(tmp_path):
+    # get_close/get_ohlc each request only the exact single day passed in (no
+    # buffer — that's added by get_ohlc_window in Task 3), so two *different*
+    # dates each trigger their own fetch; only re-querying the same date is
+    # guaranteed to hit the cache at this stage.
     fetcher = FakeHistoricalDataFetcher({
-        "AAPL": _bars([(date(2026, 1, 2), 100.0), (date(2026, 1, 5), 102.0)]),
+        "AAPL": _bars([(date(2026, 1, 2), 100.0)]),
     })
     store = HistoricalPriceStore(fetcher, tmp_path)
 
     store.get_close("AAPL", date(2026, 1, 2))
-    store.get_close("AAPL", date(2026, 1, 5))
+    store.get_close("AAPL", date(2026, 1, 2))
 
     assert len(fetcher.calls) == 1
 
