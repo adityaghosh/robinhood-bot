@@ -132,3 +132,7 @@ class HistoricalPriceStore:
 
     def get_closes_window(self, symbol: str, end_date: date, window_days: int) -> list[float]:
         return [bar.close for bar in self.get_ohlc_window(symbol, end_date, window_days)]
+
+    def trading_days(self, benchmark_symbol: str, start: date, end: date) -> list[date]:
+        self._ensure_range(benchmark_symbol, start, end)
+        return sorted(d for d in self._bars[benchmark_symbol] if start <= d <= end)

@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from robinhood_bot.backtest_data import (
     HistoricalBar,
     HistoricalPriceStore,
@@ -166,3 +168,29 @@ def test_get_closes_window_excludes_future_bars_already_present_in_cache(tmp_pat
     closes = store.get_closes_window("AAPL", date(2026, 1, 3), window_days=10)
 
     assert closes == [100.0, 101.0]
+
+
+def test_trading_days_excludes_weekends_via_benchmark_dates(tmp_path):
+    fetcher = FakeHistoricalDataFetcher({
+        "SPY": _bars([
+            (date(2026, 1, 2), 400.0),  # Friday
+            (date(2026, 1, 5), 402.0),  # Monday
+            (date(2026, 1, 6), 403.0),
+        ]),
+    })
+    store = HistoricalPriceStore(fetcher, tmp_path)
+
+    days = store.trading_days("SPY", date(2026, 1, 1), date(2026, 1, 6))
+
+    assert days == [date(2026, 1, 2), date(2026, 1, 5), date(2026, 1, 6)]
+
+
+def test_trading_days_raises_when_benchmark_fetch_fails(tmp_path):
+    class FailingFetcher:
+        def fetch_history(self, symbol, start, end):
+            raise RuntimeError("network error")
+
+    store = HistoricalPriceStore(FailingFetcher(), tmp_path)
+
+    with pytest.raises(RuntimeError):
+        store.trading_days("SPY", date(2026, 1, 1), date(2026, 1, 6))
