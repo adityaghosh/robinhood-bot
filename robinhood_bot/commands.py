@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import ledger
 from .portfolio_state import Position, PositionStatus, roll_month_if_needed
-from .risk_engine import RiskConfig, evaluate_buy, evaluate_sell
+from .risk_engine import RiskConfig, ExitAction, evaluate_buy, evaluate_position, evaluate_sell
 
 
 def _position_value(position, prices: dict[str, float]) -> tuple[float, bool]:
@@ -142,3 +142,50 @@ def cmd_record_fill(
     )
 
     return {"cash": state.cash, "action": action, "symbol": symbol, "qty": qty, "price": price}
+
+
+def cmd_check_stop_losses(
+    ledger_path: Path,
+    starting_cash: float,
+    prices: dict[str, float],
+    today: date,
+    cfg: RiskConfig,
+    apply: bool,
+) -> dict:
+    state = ledger.load_state(ledger_path, starting_cash)
+    results = []
+    remaining_active = []
+
+    for position in state.active_positions:
+        price = prices.get(position.symbol)
+        if price is None:
+            results.append({"symbol": position.symbol, "action": "SKIP", "reason": "no fresh price"})
+            remaining_active.append(position)
+            continue
+
+        evaluation = evaluate_position(position, price, today, cfg)
+        results.append({
+            "symbol": position.symbol,
+            "action": evaluation.action.value,
+            "current_status": position.status.value,
+            "new_status": evaluation.new_status.value,
+        })
+
+        if not apply or evaluation.action == ExitAction.SELL:
+            remaining_active.append(position)
+            continue
+
+        position.status = evaluation.new_status
+        position.underwater_since = evaluation.new_underwater_since
+
+        if evaluation.action == ExitAction.PROMOTE_LONG_HOLD:
+            state.long_hold_positions.append(position)
+        else:
+            remaining_active.append(position)
+
+    state.active_positions = remaining_active
+
+    if apply:
+        ledger.save_state(ledger_path, state)
+
+    return {"results": results, "applied": apply}

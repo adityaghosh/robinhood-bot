@@ -169,3 +169,76 @@ def test_cmd_record_fill_sell_unheld_symbol_raises(tmp_path):
             ledger_path, trade_log_path, starting_cash=0.0, action="sell", symbol="NFLX",
             qty=1, price=10.0, today=date(2026, 7, 10), reason="test",
         )
+
+
+def test_check_stop_losses_skips_symbol_without_fresh_price(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(
+        cash=0.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
+    ))
+    cfg = RiskConfig()
+
+    result = commands.cmd_check_stop_losses(
+        ledger_path, starting_cash=0.0, prices={}, today=date(2026, 7, 10), cfg=cfg, apply=True,
+    )
+
+    assert result["results"][0]["action"] == "SKIP"
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.active_positions[0].status == PositionStatus.ACTIVE
+
+
+def test_check_stop_losses_reports_sell_without_removing_position(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(
+        cash=0.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
+    ))
+    cfg = RiskConfig(profit_target_pct=0.08)
+
+    result = commands.cmd_check_stop_losses(
+        ledger_path, starting_cash=0.0, prices={"AAPL": 110.0}, today=date(2026, 7, 10), cfg=cfg, apply=True,
+    )
+
+    assert result["results"][0]["action"] == "SELL"
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.active_positions[0].symbol == "AAPL"
+
+
+def test_check_stop_losses_promotes_expired_position_to_long_hold(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(
+        cash=0.0,
+        active_positions=[Position(
+            "AAPL", 10, 100.0, date(2026, 6, 1), PositionStatus.WAITING,
+            underwater_since=date(2026, 7, 1),
+        )],
+    ))
+    cfg = RiskConfig(stop_loss_pct=0.05, grace_period_days=5)
+
+    result = commands.cmd_check_stop_losses(
+        ledger_path, starting_cash=0.0, prices={"AAPL": 90.0}, today=date(2026, 7, 8), cfg=cfg, apply=True,
+    )
+
+    assert result["results"][0]["action"] == "PROMOTE_LONG_HOLD"
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.active_positions == []
+    assert reloaded.long_hold_positions[0].symbol == "AAPL"
+    assert reloaded.long_hold_positions[0].status == PositionStatus.LONG_HOLD
+
+
+def test_check_stop_losses_dry_run_does_not_save(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(
+        cash=0.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
+    ))
+    cfg = RiskConfig(stop_loss_pct=0.05, grace_period_days=5)
+
+    commands.cmd_check_stop_losses(
+        ledger_path, starting_cash=0.0, prices={"AAPL": 90.0}, today=date(2026, 7, 8), cfg=cfg, apply=False,
+    )
+
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.active_positions[0].status == PositionStatus.ACTIVE
+    assert reloaded.active_positions[0].underwater_since is None
