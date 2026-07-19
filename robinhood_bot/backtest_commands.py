@@ -218,3 +218,68 @@ def cmd_backtest_run(
         "end": end.isoformat(),
         "trading_days": len(trading_days),
     }
+
+
+def cmd_backtest_report(
+    run_id: str, base_dir: Path, store: HistoricalPriceStore, benchmark_symbol: str = "SPY",
+) -> dict:
+    paths = resolve_run_paths(run_id, base_dir)
+
+    if not paths.equity_curve.exists():
+        raise ValueError(f"no equity curve data for run {run_id!r} — has `backtest run` been executed?")
+
+    with paths.equity_curve.open() as f:
+        equity_rows = list(csv.DictReader(f))
+
+    starting_equity = float(equity_rows[0]["total_equity"])
+    ending_equity = float(equity_rows[-1]["total_equity"])
+    total_return_pct = ending_equity / starting_equity - 1.0
+
+    peak = starting_equity
+    max_drawdown_pct = 0.0
+    for row in equity_rows:
+        equity = float(row["total_equity"])
+        peak = max(peak, equity)
+        drawdown = (peak - equity) / peak if peak > 0 else 0.0
+        max_drawdown_pct = max(max_drawdown_pct, drawdown)
+
+    wins = 0
+    losses = 0
+    if paths.trade_log.exists():
+        with paths.trade_log.open() as f:
+            trade_rows = list(csv.DictReader(f))
+        open_buys: dict[str, dict] = {}
+        for row in trade_rows:
+            if row["action"] == "BUY":
+                open_buys[row["symbol"]] = row
+            elif row["action"] == "SELL":
+                buy_row = open_buys.pop(row["symbol"], None)
+                if buy_row is None:
+                    continue
+                pnl = (float(row["price"]) - float(buy_row["price"])) * float(row["qty"])
+                if pnl >= 0:
+                    wins += 1
+                else:
+                    losses += 1
+
+    start_date = date.fromisoformat(equity_rows[0]["date"])
+    end_date = date.fromisoformat(equity_rows[-1]["date"])
+    benchmark_start = store.get_close(benchmark_symbol, start_date)
+    benchmark_end = store.get_close(benchmark_symbol, end_date)
+    benchmark_return_pct = (
+        (benchmark_end / benchmark_start - 1.0) if benchmark_start and benchmark_end else None
+    )
+
+    return {
+        "run_id": run_id,
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+        "starting_equity": starting_equity,
+        "ending_equity": ending_equity,
+        "total_return_pct": total_return_pct,
+        "max_drawdown_pct": max_drawdown_pct,
+        "wins": wins,
+        "losses": losses,
+        "benchmark_symbol": benchmark_symbol,
+        "benchmark_return_pct": benchmark_return_pct,
+    }

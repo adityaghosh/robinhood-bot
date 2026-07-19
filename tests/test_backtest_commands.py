@@ -209,3 +209,68 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     assert float(equity_rows[0]["total_equity"]) == pytest.approx(10_000.0)
     assert equity_rows[1]["date"] == "2026-01-05"
     assert float(equity_rows[1]["total_equity"]) == pytest.approx(10_400.0)
+
+
+def test_cmd_backtest_report_computes_return_and_benchmark(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    paths.equity_curve.parent.mkdir(parents=True, exist_ok=True)
+    with paths.equity_curve.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["date", "cash", "positions_value", "total_equity"])
+        writer.writeheader()
+        writer.writerow({"date": "2026-01-02", "cash": 5000.0, "positions_value": 5000.0, "total_equity": 10000.0})
+        writer.writerow({"date": "2026-01-05", "cash": 5216.0, "positions_value": 5184.0, "total_equity": 10400.0})
+    with paths.trade_log.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["timestamp", "action", "symbol", "qty", "price", "reason"])
+        writer.writeheader()
+        writer.writerow({"timestamp": "2026-01-02", "action": "BUY", "symbol": "A", "qty": 50, "price": 100.0, "reason": "entry"})
+        writer.writerow({"timestamp": "2026-01-05", "action": "SELL", "symbol": "A", "qty": 50, "price": 108.0, "reason": "exit"})
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [
+                HistoricalBar(date(2026, 1, 2), 400.0, 401.0, 399.0, 400.0),
+                HistoricalBar(date(2026, 1, 5), 402.0, 404.0, 401.0, 404.0),
+            ]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
+    result = backtest_commands.cmd_backtest_report("run1", tmp_path, store)
+
+    assert result["starting_equity"] == 10_000.0
+    assert result["ending_equity"] == 10_400.0
+    assert result["total_return_pct"] == pytest.approx(0.04)
+    assert result["max_drawdown_pct"] == 0.0
+    assert result["wins"] == 1
+    assert result["losses"] == 0
+    assert result["benchmark_return_pct"] == pytest.approx(0.01)
+
+
+def test_cmd_backtest_report_computes_max_drawdown(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run2", tmp_path)
+    paths.equity_curve.parent.mkdir(parents=True, exist_ok=True)
+    with paths.equity_curve.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["date", "cash", "positions_value", "total_equity"])
+        writer.writeheader()
+        writer.writerow({"date": "2026-01-02", "cash": 10000.0, "positions_value": 0.0, "total_equity": 10000.0})
+        writer.writerow({"date": "2026-01-05", "cash": 9000.0, "positions_value": 0.0, "total_equity": 9000.0})
+        writer.writerow({"date": "2026-01-06", "cash": 9500.0, "positions_value": 0.0, "total_equity": 9500.0})
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [
+                HistoricalBar(date(2026, 1, 2), 400.0, 401.0, 399.0, 400.0),
+                HistoricalBar(date(2026, 1, 6), 400.0, 401.0, 399.0, 400.0),
+            ]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
+    result = backtest_commands.cmd_backtest_report("run2", tmp_path, store)
+
+    assert result["max_drawdown_pct"] == pytest.approx(0.10)
+    assert result["wins"] == 0
+    assert result["losses"] == 0
+
+
+def test_cmd_backtest_report_raises_when_no_equity_curve(tmp_path):
+    with pytest.raises(ValueError):
+        backtest_commands.cmd_backtest_report("missing-run", tmp_path, store=None)
