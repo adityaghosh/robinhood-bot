@@ -88,6 +88,22 @@ def test_repeated_query_for_same_date_does_not_refetch(tmp_path):
     assert len(fetcher.calls) == 1
 
 
+def test_query_for_new_date_fetches_and_merges_with_existing_cache(tmp_path):
+    fetcher = FakeHistoricalDataFetcher({
+        "AAPL": _bars([(date(2026, 1, 2), 100.0), (date(2026, 1, 5), 102.0)]),
+    })
+    store = HistoricalPriceStore(fetcher, tmp_path)
+
+    store.get_close("AAPL", date(2026, 1, 2))
+    store.get_close("AAPL", date(2026, 1, 5))
+
+    assert len(fetcher.calls) == 2
+    assert fetcher.calls[1] == ("AAPL", date(2026, 1, 2), date(2026, 1, 5))
+    # Both dates remain retrievable after the merge.
+    assert store.get_close("AAPL", date(2026, 1, 2)) == 100.0
+    assert store.get_close("AAPL", date(2026, 1, 5)) == 102.0
+
+
 def test_cache_persists_across_store_instances(tmp_path):
     fetcher = FakeHistoricalDataFetcher({
         "AAPL": _bars([(date(2026, 1, 2), 100.0), (date(2026, 1, 5), 102.0)]),
