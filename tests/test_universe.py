@@ -143,3 +143,19 @@ def test_average_true_range_pct_known_value():
         Bar(high=104.0, low=100.5, close=103.0),
     ]
     assert average_true_range_pct(bars) == pytest.approx(0.030744336569579287)
+
+
+from robinhood_bot.universe import percentile_ranks
+
+
+def test_percentile_ranks_empty_input():
+    assert percentile_ranks({}) == {}
+
+
+def test_percentile_ranks_single_entry_is_one():
+    assert percentile_ranks({"A": 5.0}) == {"A": 1.0}
+
+
+def test_percentile_ranks_orders_ascending():
+    result = percentile_ranks({"A": 1.0, "B": 3.0, "C": 2.0})
+    assert result == {"A": 0.0, "C": 0.5, "B": 1.0}

@@ -124,3 +124,13 @@ def average_true_range_pct(bars: list[Bar]) -> float:
     atr = sum(true_ranges) / len(true_ranges)
     last_close = bars[-1].close
     return (atr / last_close) if last_close else 0.0
+
+
+def percentile_ranks(values: dict[str, float]) -> dict[str, float]:
+    if not values:
+        return {}
+    ordered = sorted(values, key=lambda s: values[s])
+    n = len(ordered)
+    if n == 1:
+        return {ordered[0]: 1.0}
+    return {symbol: i / (n - 1) for i, symbol in enumerate(ordered)}
