@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from robinhood_bot.universe import (
@@ -7,6 +7,7 @@ from robinhood_bot.universe import (
     Candidate,
     UniverseCache,
     UniverseConfig,
+    is_cache_stale,
     load_cache,
     save_cache,
 )
@@ -76,3 +77,17 @@ def test_save_and_load_cache_round_trip(tmp_path):
     assert loaded.members[0].symbol == "AAPL"
     assert loaded.members[0].market_cap == 3.0e12
     assert loaded.members[1].symbol == "TQQQ"
+
+
+def test_is_cache_stale_when_cache_is_none():
+    assert is_cache_stale(None, today=date(2026, 7, 19), max_age_days=7) is True
+
+
+def test_is_cache_stale_at_exact_max_age_is_not_stale():
+    cache = UniverseCache(fetched_at=date(2026, 7, 12), members=[])
+    assert is_cache_stale(cache, today=date(2026, 7, 19), max_age_days=7) is False
+
+
+def test_is_cache_stale_past_max_age_is_stale():
+    cache = UniverseCache(fetched_at=date(2026, 7, 11), members=[])
+    assert is_cache_stale(cache, today=date(2026, 7, 19), max_age_days=7) is True

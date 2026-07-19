@@ -88,3 +88,9 @@ def save_cache(path: Path, cache: UniverseCache) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
         json.dump(cache_to_dict(cache), f, indent=2)
+
+
+def is_cache_stale(cache: UniverseCache | None, today: date, max_age_days: int) -> bool:
+    if cache is None:
+        return True
+    return (today - cache.fetched_at).days > max_age_days
