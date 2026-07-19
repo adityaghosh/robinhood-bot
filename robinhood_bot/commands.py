@@ -4,7 +4,7 @@ from datetime import date
 from pathlib import Path
 
 from . import ledger
-from .portfolio_state import roll_month_if_needed
+from .portfolio_state import Position, PositionStatus, roll_month_if_needed
 from .risk_engine import RiskConfig, evaluate_buy, evaluate_sell
 
 
@@ -85,3 +85,60 @@ def cmd_risk_check(
         return {"approved": decision.approved, "reason": decision.reason}
 
     raise ValueError(f"unknown action: {action}")
+
+
+def cmd_record_fill(
+    ledger_path: Path,
+    trade_log_path: Path,
+    starting_cash: float,
+    action: str,
+    symbol: str,
+    qty: float,
+    price: float,
+    today: date,
+    reason: str,
+) -> dict:
+    state = ledger.load_state(ledger_path, starting_cash)
+
+    if action == "buy":
+        if state.is_held(symbol):
+            raise ValueError(f"{symbol} already held")
+        cost = qty * price
+        if cost > state.cash:
+            raise ValueError("insufficient cash for fill")
+        state.cash -= cost
+        state.active_positions.append(
+            Position(
+                symbol=symbol,
+                qty=qty,
+                entry_price=price,
+                entry_date=today,
+                status=PositionStatus.ACTIVE,
+            )
+        )
+    elif action == "sell":
+        position = state.find_active(symbol) or state.find_long_hold(symbol)
+        if position is None:
+            raise ValueError(f"{symbol} not currently held")
+        state.cash += position.qty * price
+        if position in state.active_positions:
+            state.active_positions.remove(position)
+        else:
+            state.long_hold_positions.remove(position)
+    else:
+        raise ValueError(f"unknown action: {action}")
+
+    ledger.save_state(ledger_path, state)
+    ledger.append_trade_log(
+        trade_log_path,
+        {
+            "timestamp": today.isoformat(),
+            "action": action.upper(),
+            "symbol": symbol,
+            "qty": qty,
+            "price": price,
+            "reason": reason,
+        },
+    )
+
+    return {"cash": state.cash, "action": action, "symbol": symbol, "qty": qty, "price": price}

@@ -110,3 +110,62 @@ def test_cmd_risk_check_unknown_action_raises(tmp_path):
             ledger_path, starting_cash=0.0, action="hold", symbol="AAPL",
             proposed_value=0.0, prices={}, cfg=cfg,
         )
+
+
+def test_cmd_record_fill_buy_updates_cash_and_adds_position(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    trade_log_path = tmp_path / "trade_log.csv"
+    ledger.save_state(ledger_path, PortfolioState(cash=10_000.0))
+
+    result = commands.cmd_record_fill(
+        ledger_path, trade_log_path, starting_cash=0.0, action="buy", symbol="MSFT",
+        qty=5, price=300.0, today=date(2026, 7, 10), reason="daily cycle",
+    )
+
+    assert result["cash"] == 8_500.0
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.cash == 8_500.0
+    assert reloaded.active_positions[0].symbol == "MSFT"
+    assert trade_log_path.exists()
+
+
+def test_cmd_record_fill_buy_rejects_insufficient_cash(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    trade_log_path = tmp_path / "trade_log.csv"
+    ledger.save_state(ledger_path, PortfolioState(cash=100.0))
+
+    with pytest.raises(ValueError):
+        commands.cmd_record_fill(
+            ledger_path, trade_log_path, starting_cash=0.0, action="buy", symbol="MSFT",
+            qty=5, price=300.0, today=date(2026, 7, 10), reason="daily cycle",
+        )
+
+
+def test_cmd_record_fill_sell_removes_position_and_credits_cash(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    trade_log_path = tmp_path / "trade_log.csv"
+    ledger.save_state(ledger_path, PortfolioState(
+        cash=1_000.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
+    ))
+
+    result = commands.cmd_record_fill(
+        ledger_path, trade_log_path, starting_cash=0.0, action="sell", symbol="AAPL",
+        qty=10, price=110.0, today=date(2026, 7, 10), reason="profit target",
+    )
+
+    assert result["cash"] == 2_100.0
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.active_positions == []
+
+
+def test_cmd_record_fill_sell_unheld_symbol_raises(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    trade_log_path = tmp_path / "trade_log.csv"
+    ledger.save_state(ledger_path, PortfolioState(cash=1_000.0))
+
+    with pytest.raises(ValueError):
+        commands.cmd_record_fill(
+            ledger_path, trade_log_path, starting_cash=0.0, action="sell", symbol="NFLX",
+            qty=1, price=10.0, today=date(2026, 7, 10), reason="test",
+        )
