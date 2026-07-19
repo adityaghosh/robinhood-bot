@@ -147,3 +147,63 @@ one more time and report to the user:
 - Current `monthly_return_pct` against the monthly goal.
 - Anything that failed or was skipped (a quote that didn't come back, an
   order that failed to place), stated plainly.
+
+## Backtest Mode
+
+Invoked explicitly with a date range and run id, e.g. `/robinhood-trading
+--backtest --run RUN_ID --start 2026-01-01 --end 2026-03-31`. Runs the same
+research-and-decide loop as the daily cycle above, once per simulated
+trading day, entirely against historical data — no Robinhood MCP
+connection is used or needed in this mode.
+
+### Get the list of simulated days
+
+```
+python -m robinhood_bot.cli backtest trading-days --start START_DATE --end END_DATE
+```
+
+Loop through each date in the returned `trading_days` list, in order,
+running Steps 1-9 below for each one before moving to the next simulated
+date.
+
+### Per-simulated-day steps
+
+Replace the live commands from the daily cycle above with their `backtest`
+equivalents, all parameterized by `--run RUN_ID --asof <simulated date>`:
+
+- **Step 1 (read mode & holdings):** `python -m robinhood_bot.cli backtest
+  state --run RUN_ID --asof <simulated date> --prices-json "{}"`. Note that
+  `trading_mode` here is always `"backtest"` — there is no live-order-
+  placement branch anywhere in this mode; every trade is simulated.
+- **Step 2 (universe):** skipped — `backtest run`'s candidate list (today's
+  live universe, applied retroactively) isn't available per-command in
+  this mode. Instead, shortlist from whatever symbols you already know are
+  liquid, well-known equities (e.g. run `cli.py universe` once, live,
+  before starting the backtest, and reuse that fixed candidate list for
+  every simulated day — mirroring exactly what `backtest run`'s
+  deterministic mode does internally).
+- **Step 4 (fresh quotes):** `python -m robinhood_bot.cli backtest quote
+  SYMBOL --asof <simulated date>` for each shortlisted symbol, in place of
+  the Robinhood MCP quote tool. If `"price"` comes back `null`, skip that
+  symbol for this simulated day — same rule as a failed live quote.
+- **Step 5 (refresh state with real prices):** `python -m robinhood_bot.cli
+  backtest state --run RUN_ID --asof <simulated date> --prices-json
+  "<quotes from Step 4>"`.
+- **Steps 7-8 (gate and execute):** `python -m robinhood_bot.cli backtest
+  risk-check {buy|sell} SYMBOL --run RUN_ID --asof <simulated date>
+  --prices-json "<quotes>"`, then on approval, `python -m robinhood_bot.cli
+  backtest record-fill {buy|sell} SYMBOL --run RUN_ID --asof <simulated
+  date> --qty <n> --price <quote price> --reason "<why>"`. There is no
+  live-order-placement call in this mode, ever.
+
+### Summarize
+
+After the last simulated day, run:
+
+```
+python -m robinhood_bot.cli backtest report --run RUN_ID
+```
+
+Report `total_return_pct`, `max_drawdown_pct`, `wins`/`losses`, and
+`benchmark_return_pct` (buy-and-hold SPY over the same window) to the
+user, alongside any symbols that were skipped for missing quotes.
