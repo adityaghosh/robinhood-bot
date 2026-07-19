@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -100,3 +101,14 @@ def rank_top_by_market_cap(tickers: list[str], market_caps: dict[str, float], to
     known = [t for t in tickers if t in market_caps]
     known.sort(key=lambda t: market_caps[t], reverse=True)
     return known[:top_n]
+
+
+def realized_volatility(closes: list[float]) -> float:
+    if len(closes) < 2:
+        return 0.0
+    returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    if len(returns) < 2:
+        return 0.0
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    return math.sqrt(variance) * math.sqrt(252)

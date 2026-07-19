@@ -1,6 +1,8 @@
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 from robinhood_bot.universe import (
     Bar,
     CachedMember,
@@ -106,3 +108,20 @@ def test_rank_top_by_market_cap_excludes_tickers_without_market_cap():
     tickers = ["A", "B", "D"]
     market_caps = {"A": 100.0, "B": 300.0}
     assert rank_top_by_market_cap(tickers, market_caps, top_n=5) == ["B", "A"]
+
+
+from robinhood_bot.universe import realized_volatility
+
+
+def test_realized_volatility_of_constant_closes_is_zero():
+    assert realized_volatility([100.0, 100.0, 100.0, 100.0]) == 0.0
+
+
+def test_realized_volatility_too_few_points_is_zero():
+    assert realized_volatility([100.0]) == 0.0
+    assert realized_volatility([]) == 0.0
+
+
+def test_realized_volatility_known_value():
+    closes = [100.0, 102.0, 98.0, 101.0, 99.0]
+    assert realized_volatility(closes) == pytest.approx(0.5246239382982052)
