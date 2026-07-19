@@ -109,3 +109,51 @@ def test_cmd_backtest_trading_days_returns_isoformat_dates(tmp_path):
     result = backtest_commands.cmd_backtest_trading_days(date(2026, 1, 1), date(2026, 1, 6), store)
 
     assert result["trading_days"] == ["2026-01-02", "2026-01-05"]
+
+
+def test_rank_candidates_as_of_ranks_by_recent_volatility(tmp_path):
+    low_bars = [
+        HistoricalBar(date(2026, 1, 1), 100.0, 100.5, 99.5, 100.0),
+        HistoricalBar(date(2026, 1, 2), 100.0, 100.5, 99.7, 100.1),
+        HistoricalBar(date(2026, 1, 3), 100.1, 100.6, 99.8, 100.05),
+    ]
+    high_bars = [
+        HistoricalBar(date(2026, 1, 1), 100.0, 110.0, 90.0, 100.0),
+        HistoricalBar(date(2026, 1, 2), 100.0, 115.0, 85.0, 105.0),
+        HistoricalBar(date(2026, 1, 3), 105.0, 120.0, 80.0, 95.0),
+    ]
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            bars = {"LOW": low_bars, "HIGH": high_bars}[symbol]
+            return [b for b in bars if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
+    ranked = backtest_commands.rank_candidates_as_of(
+        ["LOW", "HIGH"], store, date(2026, 1, 3), vol_window_days=2, atr_window_days=2,
+    )
+
+    assert ranked == ["HIGH", "LOW"]
+
+
+def test_rank_candidates_as_of_skips_symbols_with_insufficient_history(tmp_path):
+    old_bars = [
+        HistoricalBar(date(2026, 1, 1), 100.0, 100.5, 99.5, 100.0),
+        HistoricalBar(date(2026, 1, 2), 100.0, 100.5, 99.7, 100.1),
+        HistoricalBar(date(2026, 1, 3), 100.1, 100.6, 99.8, 100.05),
+    ]
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            if symbol == "NEW":
+                return [HistoricalBar(date(2026, 1, 3), 50.0, 51.0, 49.0, 50.0)]
+            return [b for b in old_bars if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
+    ranked = backtest_commands.rank_candidates_as_of(
+        ["OLD", "NEW"], store, date(2026, 1, 3), vol_window_days=2, atr_window_days=2,
+    )
+
+    assert ranked == ["OLD"]

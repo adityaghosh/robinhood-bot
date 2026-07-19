@@ -7,6 +7,7 @@ from pathlib import Path
 from . import commands
 from .backtest_data import HistoricalPriceStore
 from .risk_engine import RiskConfig
+from .universe import average_true_range_pct, percentile_ranks, realized_volatility
 
 
 @dataclass
@@ -67,3 +68,27 @@ def cmd_backtest_trading_days(
 ) -> dict:
     days = store.trading_days(benchmark_symbol, start, end)
     return {"trading_days": [d.isoformat() for d in days]}
+
+
+def rank_candidates_as_of(
+    symbols: list[str],
+    store: HistoricalPriceStore,
+    today: date,
+    vol_window_days: int = 20,
+    atr_window_days: int = 14,
+) -> list[str]:
+    vols: dict[str, float] = {}
+    atrs: dict[str, float] = {}
+
+    for symbol in symbols:
+        closes = store.get_closes_window(symbol, today, vol_window_days + 1)
+        bars = store.get_ohlc_window(symbol, today, atr_window_days + 1)
+        if len(closes) < 2 or len(bars) < 2:
+            continue
+        vols[symbol] = realized_volatility(closes)
+        atrs[symbol] = average_true_range_pct(bars)
+
+    vol_ranks = percentile_ranks(vols)
+    atr_ranks = percentile_ranks(atrs)
+    scored = {s: (vol_ranks[s] + atr_ranks[s]) / 2 for s in vols}
+    return sorted(scored, key=lambda s: scored[s], reverse=True)
