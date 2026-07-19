@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -119,3 +119,16 @@ class HistoricalPriceStore:
     def get_close(self, symbol: str, on: date) -> float | None:
         bar = self.get_ohlc(symbol, on)
         return bar.close if bar else None
+
+    def get_ohlc_window(self, symbol: str, end_date: date, window_days: int) -> list[HistoricalBar]:
+        # Fetch a generous calendar-day buffer so `window_days` *trading* days
+        # are available even across weekends/holidays; the trailing-slice
+        # below is what actually enforces no-lookahead, not this buffer.
+        fetch_start = end_date - timedelta(days=window_days * 2 + 10)
+        self._ensure_range(symbol, fetch_start, end_date)
+        dates = sorted(d for d in self._bars[symbol] if d <= end_date)
+        trailing = dates[-window_days:]
+        return [self._bars[symbol][d] for d in trailing]
+
+    def get_closes_window(self, symbol: str, end_date: date, window_days: int) -> list[float]:
+        return [bar.close for bar in self.get_ohlc_window(symbol, end_date, window_days)]

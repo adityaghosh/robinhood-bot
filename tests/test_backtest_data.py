@@ -116,3 +116,53 @@ def test_cache_persists_across_store_instances(tmp_path):
 
     assert price == 102.0
     assert len(fetcher.calls) == 1
+
+
+def test_get_closes_window_returns_trailing_closes_ending_at_date(tmp_path):
+    fetcher = FakeHistoricalDataFetcher({
+        "AAPL": _bars([
+            (date(2026, 1, 2), 100.0),
+            (date(2026, 1, 3), 101.0),
+            (date(2026, 1, 4), 102.0),
+            (date(2026, 1, 5), 103.0),
+        ]),
+    })
+    store = HistoricalPriceStore(fetcher, tmp_path)
+
+    closes = store.get_closes_window("AAPL", date(2026, 1, 4), window_days=2)
+
+    assert closes == [101.0, 102.0]
+
+
+def test_get_closes_window_never_includes_dates_after_end_date(tmp_path):
+    fetcher = FakeHistoricalDataFetcher({
+        "AAPL": _bars([
+            (date(2026, 1, 2), 100.0),
+            (date(2026, 1, 3), 101.0),
+            (date(2026, 1, 4), 102.0),
+            (date(2026, 1, 5), 103.0),
+        ]),
+    })
+    store = HistoricalPriceStore(fetcher, tmp_path)
+
+    closes = store.get_closes_window("AAPL", date(2026, 1, 3), window_days=10)
+
+    assert closes == [100.0, 101.0]
+
+
+def test_get_closes_window_excludes_future_bars_already_present_in_cache(tmp_path):
+    fetcher = FakeHistoricalDataFetcher({
+        "AAPL": _bars([
+            (date(2026, 1, 2), 100.0),
+            (date(2026, 1, 3), 101.0),
+            (date(2026, 1, 4), 102.0),
+            (date(2026, 1, 5), 103.0),
+        ]),
+    })
+    store = HistoricalPriceStore(fetcher, tmp_path)
+    # Warm the cache with the full range first, as `backtest run` would do.
+    store.get_ohlc_window("AAPL", date(2026, 1, 5), window_days=10)
+
+    closes = store.get_closes_window("AAPL", date(2026, 1, 3), window_days=10)
+
+    assert closes == [100.0, 101.0]
