@@ -1,3 +1,4 @@
+# robinhood_bot/cli.py
 from __future__ import annotations
 
 import argparse
@@ -8,9 +9,12 @@ from pathlib import Path
 
 from . import commands
 from .risk_engine import RiskConfig
+from .universe import UniverseConfig, build_universe
+from .universe_client import LiveMarketDataClient
 
 LEDGER_PATH = Path("data/ledger.json")
 TRADE_LOG_PATH = Path("data/trade_log.csv")
+UNIVERSE_CACHE_PATH = Path("data/universe_cache.json")
 STARTING_CASH = 10_000.0
 
 
@@ -43,6 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     p_stop.add_argument("--prices-json", required=True)
     p_stop.add_argument("--apply", action="store_true")
 
+    p_universe = sub.add_parser("universe")
+    p_universe.add_argument("--refresh", action="store_true")
+    p_universe.add_argument("--mode", choices=["realized_vol", "atr_pct", "both"], default=None)
+
     args = parser.parse_args(argv)
     today = date.today()
     cfg = RiskConfig()
@@ -59,10 +67,30 @@ def main(argv: list[str] | None = None) -> int:
             LEDGER_PATH, TRADE_LOG_PATH, STARTING_CASH, args.action, args.symbol,
             args.qty, args.price, today, args.reason,
         )
-    else:
+    elif args.command == "check-stop-losses":
         result = commands.cmd_check_stop_losses(
             LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, cfg, args.apply,
         )
+    else:
+        universe_cfg = UniverseConfig()
+        if args.mode:
+            universe_cfg.ranking_mode = args.mode
+        candidates = build_universe(
+            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, universe_cfg, today, args.refresh
+        )
+        result = {
+            "candidates": [
+                {
+                    "symbol": c.symbol,
+                    "category": c.category,
+                    "market_cap": c.market_cap,
+                    "realized_vol": c.realized_vol,
+                    "atr_pct": c.atr_pct,
+                    "combined_rank": c.combined_rank,
+                }
+                for c in candidates
+            ]
+        }
 
     print(json.dumps(result, indent=2))
     return 0
