@@ -125,3 +125,21 @@ def test_realized_volatility_too_few_points_is_zero():
 def test_realized_volatility_known_value():
     closes = [100.0, 102.0, 98.0, 101.0, 99.0]
     assert realized_volatility(closes) == pytest.approx(0.5246239382982052)
+
+
+from robinhood_bot.universe import average_true_range_pct
+
+
+def test_average_true_range_pct_too_few_bars_is_zero():
+    assert average_true_range_pct([]) == 0.0
+    assert average_true_range_pct([Bar(101.0, 99.0, 100.0)]) == 0.0
+
+
+def test_average_true_range_pct_known_value():
+    bars = [
+        Bar(high=101.0, low=99.0, close=100.0),
+        Bar(high=103.0, low=100.0, close=102.0),
+        Bar(high=102.5, low=99.5, close=101.0),
+        Bar(high=104.0, low=100.5, close=103.0),
+    ]
+    assert average_true_range_pct(bars) == pytest.approx(0.030744336569579287)
