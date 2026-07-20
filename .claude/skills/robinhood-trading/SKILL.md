@@ -36,6 +36,11 @@ fine, this call is only to learn:
 - Current `week_realized_pnl` and `week_profit_target`, for context on
   how much room is left before this week's profit goal — useful when
   weighing whether to cut a lagging position in Step 6 below.
+- `prior_week_realized_pnl` and `effective_max_active_positions` — a
+  strong prior week can raise this cycle's active-slot cap above the
+  usual 5 (see Step 6). `effective_max_active_positions` is the real
+  cap to use everywhere below; the "5-slot" figure from before this
+  mechanism existed is only the baseline, not a hard ceiling anymore.
 
 ## Step 2 — Get the ranked universe
 
@@ -100,9 +105,10 @@ For each shortlisted symbol **not currently held**:
   and recent price action from the fresh quote.
 - Decide: propose **BUY** (a new position) or skip it.
 - You can open at most as many new positions as there are free slots
-  out of the 5-slot active cap (`5 - len(active_positions)` from
-  Step 5's `active_positions`, since `WAITING` positions still occupy a
-  slot).
+  out of the active cap (`effective_max_active_positions -
+  len(active_positions)` from Step 1/Step 5's `state` output, since
+  `WAITING` positions still occupy a slot). This cap may be higher than
+  the usual 5 if last week cleared its profit goal with room to spare.
 
 ## Step 7 — Gate every proposed BUY/SELL
 
