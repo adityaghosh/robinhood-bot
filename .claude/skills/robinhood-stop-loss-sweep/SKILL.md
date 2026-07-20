@@ -27,12 +27,15 @@ python -m robinhood_bot.cli state --prices-json "{}"
 
 Note `trading_mode` and every symbol in `active_positions` (this
 includes both `ACTIVE` and `WAITING` status positions — both occupy an
-active slot and both are checked here).
+active slot and both are checked here) **and** every symbol in
+`long_hold_positions` — a recovered long-hold position is now eligible
+for the weekly profit-goal sweep below, exactly like an active winner.
 
 ## Step 2 — Get fresh quotes
 
 Using the Robinhood MCP quote tool (e.g. `get_equity_quotes`), fetch a
-current price for every symbol from Step 1's `active_positions`.
+current price for every symbol from Step 1's `active_positions` **and**
+`long_hold_positions`.
 
 **If a quote fails for any symbol: skip that symbol this sweep.** Never
 fabricate or reuse a stale price.
@@ -43,12 +46,16 @@ fabricate or reuse a stale price.
 python -m robinhood_bot.cli check-stop-losses --prices-json "<fresh quotes>" --apply
 ```
 
-This one command evaluates every active position against its
-stop-loss/profit-target thresholds and the long-hold grace period, and
-returns a `results` list. Because `--apply` was passed, any
-`PROMOTE_LONG_HOLD` result has **already been applied** to the ledger —
-the position has moved from `active_positions` to `long_hold_positions`.
-You don't need to do anything further for those.
+This one command evaluates every active position's stop-loss/grace-
+period state, **and** checks all active *and* long-hold positions
+against this week's profit goal (`week_realized_pnl` vs.
+`week_profit_target` from `state`) — the biggest winners get flagged for
+sale first, escalating to the next tier once the current one is
+cleared, rather than stopping for the rest of the week the moment the
+goal is first hit. Returns a `results` list. Because `--apply` was
+passed, any `PROMOTE_LONG_HOLD` result has **already been applied** to
+the ledger — the position has moved from `active_positions` to
+`long_hold_positions`. You don't need to do anything further for those.
 
 ## Step 4 — Execute any SELL results
 
@@ -57,11 +64,12 @@ For each entry in `results` where `"action": "SELL"`:
 **If `trading_mode` is `"paper"`:**
 
 ```
-python -m robinhood_bot.cli record-fill sell SYMBOL --qty <held qty> --price <fresh quote from Step 2> --reason "stop-loss sweep: profit target hit"
+python -m robinhood_bot.cli record-fill sell SYMBOL --qty <held qty> --price <fresh quote from Step 2> --reason "weekly profit-goal exit"
 ```
 
 `<held qty>` isn't in the `check-stop-losses` result — pull it from
-Step 1's `active_positions` data for this symbol.
+Step 1's `active_positions` **or** `long_hold_positions` data for this
+symbol, since a sold symbol could now be either.
 
 **If `trading_mode` is `"live"`:**
 

@@ -33,6 +33,9 @@ fine, this call is only to learn:
 - The symbols currently in `active_positions` and `long_hold_positions`.
 - Current `month_start_equity` and `monthly_return_pct`, for context on
   progress toward this month's return goal.
+- Current `week_realized_pnl` and `week_profit_target`, for context on
+  how much room is left before this week's profit goal — useful when
+  weighing whether to cut a lagging position in Step 6 below.
 
 ## Step 2 — Get the ranked universe
 
@@ -72,14 +75,22 @@ accurate, not placeholder values.
 
 ## Step 6 — Research and decide, per shortlisted symbol
 
+Profit-taking is no longer a per-position judgment call here — it's
+fully mechanical now, driven by the weekly profit goal
+(`risk_engine.evaluate_profit_exits`, surfaced through
+`check-stop-losses`'s `SELL` results, covered in the stop-loss-sweep
+skill). Your discretion in this step is for two things instead:
+
 For each symbol currently **held** (active or long-hold):
 - Note its lifecycle `status` (`ACTIVE`, `WAITING`, `LONG_HOLD`) and
   `unrealized_pnl_pct` from Step 5.
-- `LONG_HOLD` positions are not part of today's short-term rotation —
-  only consider selling one if it has clearly recovered and you'd
-  exit it; otherwise leave it alone.
-- For `ACTIVE`/`WAITING` positions, decide: propose **SELL** (if you'd
-  exit today) or **HOLD** (do nothing).
+- Consider a **discretionary early SELL** if a position has moved
+  sharply against you — you don't have to wait out the full grace
+  period if the decline looks decisive rather than noisy (see this
+  session's backtest transcripts for worked examples of both calls).
+- Otherwise, propose **HOLD** — the mechanical stop-loss/grace-period
+  machinery and the weekly profit-goal sweep both run independently of
+  this step and will catch what they're each designed to catch.
 
 For each shortlisted symbol **not currently held**:
 - Consider its `combined_rank` (volatility), `realized_vol`/`atr_pct`,
@@ -189,6 +200,15 @@ equivalents, all parameterized by `--run RUN_ID --asof <simulated date>`:
 - **Step 5 (refresh state with real prices):** `python -m robinhood_bot.cli
   backtest state --run RUN_ID --asof <simulated date> --prices-json
   "<quotes from Step 4>"`.
+- **Mechanical profit/stop-loss sweep (not numbered in the live cycle
+  above, since it's a separate skill there):** `python -m robinhood_bot.cli
+  backtest check-stop-losses --run RUN_ID --asof <simulated date>
+  --prices-json "<quotes from Step 4, covering active_positions AND
+  long_hold_positions>" --apply`. This reports (and applies any
+  `PROMOTE_LONG_HOLD` for) stop-loss breaches, and now also reports any
+  `SELL` entries from the weekly profit-goal mechanism — still
+  report-only for `SELL`, so execute them via Steps 7-8 below exactly
+  like every other proposed trade.
 - **Steps 7-8 (gate and execute):** `python -m robinhood_bot.cli backtest
   risk-check {buy|sell} SYMBOL --run RUN_ID --asof <simulated date>
   --value <proposed dollar amount, for buys> --prices-json "<quotes>"`,
