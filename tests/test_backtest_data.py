@@ -170,6 +170,26 @@ def test_get_closes_window_excludes_future_bars_already_present_in_cache(tmp_pat
     assert closes == [100.0, 101.0]
 
 
+def test_prefetch_warms_cache_so_later_query_does_not_refetch(tmp_path):
+    fetcher = FakeHistoricalDataFetcher({
+        "AAPL": _bars([
+            (date(2026, 1, 2), 100.0),
+            (date(2026, 1, 3), 101.0),
+            (date(2026, 1, 4), 102.0),
+            (date(2026, 1, 5), 103.0),
+        ]),
+    })
+    store = HistoricalPriceStore(fetcher, tmp_path)
+
+    store.prefetch("AAPL", date(2026, 1, 2), date(2026, 1, 5))
+    assert len(fetcher.calls) == 1
+
+    price = store.get_close("AAPL", date(2026, 1, 4))
+
+    assert price == 102.0
+    assert len(fetcher.calls) == 1
+
+
 def test_trading_days_excludes_weekends_via_benchmark_dates(tmp_path):
     fetcher = FakeHistoricalDataFetcher({
         "SPY": _bars([

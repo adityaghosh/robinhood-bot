@@ -112,6 +112,9 @@ class HistoricalPriceStore:
             SymbolCache(start=fetch_start, end=fetch_end, bars=list(self._bars[symbol].values())),
         )
 
+    def prefetch(self, symbol: str, start: date, end: date) -> None:
+        self._ensure_range(symbol, start, end)
+
     def get_ohlc(self, symbol: str, on: date) -> HistoricalBar | None:
         self._ensure_range(symbol, on, on)
         return self._bars[symbol].get(on)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from . import commands, ledger
@@ -130,6 +130,20 @@ def cmd_backtest_run(
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
     trading_days = store.trading_days(benchmark_symbol, start, end)
+
+    # Prefetch each candidate's full needed range up front so the day-by-day
+    # `rank_candidates_as_of` calls below always hit an already-warm cache
+    # instead of triggering one `_ensure_range` fetch per symbol per day
+    # (which would make a cold multi-year run O(days x symbols) network
+    # calls instead of O(symbols)). The lookback buffer must cover the
+    # FIRST day's ranking window too, not just subsequent days, and must
+    # match `get_ohlc_window`/`get_closes_window`'s own buffer formula
+    # (`window_days * 2 + 10`, where `window_days` there is
+    # `vol_window_days + 1` / `atr_window_days + 1`) or the first call on
+    # day one would still fall outside the prefetched range and refetch.
+    lookback_days = (max(vol_window_days, atr_window_days) + 1) * 2 + 10
+    for symbol in candidate_symbols:
+        store.prefetch(symbol, start - timedelta(days=lookback_days), end)
 
     for today in trading_days:
         # 1. Exits: evaluate every active position against today's close.

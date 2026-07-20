@@ -174,10 +174,15 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     }
 
     class FakeFetcher:
+        def __init__(self):
+            self.calls = []
+
         def fetch_history(self, symbol, start, end):
+            self.calls.append((symbol, start, end))
             return [b for b in bars[symbol] if start <= b.date <= end]
 
-    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    fetcher = FakeFetcher()
+    store = HistoricalPriceStore(fetcher, tmp_path / "cache")
     cfg = RiskConfig(
         max_active_positions=1, stop_loss_pct=0.05, profit_target_pct=0.08,
         max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
@@ -189,6 +194,12 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     )
 
     assert result["trading_days"] == 2
+
+    # The one-time prefetch pass before the day-by-day loop should mean each
+    # candidate symbol needs at most one `fetch_history` call for the whole
+    # multi-day run, even though `rank_candidates_as_of` queries it once per
+    # day inside the loop.
+    assert len([c for c in fetcher.calls if c[0] == "A"]) <= 1
 
     paths = backtest_commands.resolve_run_paths("run1", tmp_path)
     final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
@@ -209,6 +220,60 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     assert float(equity_rows[0]["total_equity"]) == pytest.approx(10_000.0)
     assert equity_rows[1]["date"] == "2026-01-05"
     assert float(equity_rows[1]["total_equity"]) == pytest.approx(10_400.0)
+
+
+def test_cmd_backtest_run_promotes_expired_underwater_position_to_long_hold(tmp_path):
+    # A has been underwater (price 80 vs entry 100, well past stop_loss_pct)
+    # since 2025-12-20, already flagged WAITING by a prior day's evaluation.
+    # By 2026-01-02 that's 13 days underwater, past grace_period_days=5, so
+    # `evaluate_position` should return PROMOTE_LONG_HOLD rather than SELL —
+    # this exercises the one exits-phase branch the existing tests skip.
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=9_000.0,
+        active_positions=[Position(
+            "A", 10, 100.0, date(2025, 12, 1), PositionStatus.WAITING,
+            underwater_since=date(2025, 12, 20),
+        )],
+        month="2026-01",
+        month_start_equity=10_000.0,
+    ))
+
+    bars = {
+        "SPY": [HistoricalBar(date(2026, 1, 2), 400.0, 401.0, 399.0, 400.0)],
+        "A": [HistoricalBar(date(2026, 1, 2), 82.0, 83.0, 79.0, 80.0)],
+        "B": [
+            HistoricalBar(date(2025, 12, 30), 47.0, 48.5, 46.5, 48.0),
+            HistoricalBar(date(2025, 12, 31), 48.0, 49.5, 47.5, 49.0),
+            HistoricalBar(date(2026, 1, 2), 49.0, 50.5, 48.5, 50.0),
+        ],
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars[symbol] if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, stop_loss_pct=0.05, profit_target_pct=0.08,
+        grace_period_days=5, max_position_pct=1.0, min_position_pct=1.0,
+    )
+
+    backtest_commands.cmd_backtest_run(
+        "run1", tmp_path, starting_cash=9_000.0, start=date(2026, 1, 2), end=date(2026, 1, 2),
+        candidate_symbols=["B"], store=store, cfg=cfg, vol_window_days=2, atr_window_days=2,
+    )
+
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    final_state = ledger.load_state(paths.ledger, starting_cash=9_000.0)
+
+    assert [p.symbol for p in final_state.active_positions] != ["A"]
+    assert final_state.long_hold_positions[0].symbol == "A"
+    assert final_state.long_hold_positions[0].status == PositionStatus.LONG_HOLD
+    # The promoted position no longer counts against the active-slot cap, so
+    # the freed slot could be (and here, is) filled by the next top candidate.
+    assert final_state.active_slot_count() == 1
+    assert final_state.active_positions[0].symbol == "B"
 
 
 def test_cmd_backtest_report_computes_return_and_benchmark(tmp_path):
