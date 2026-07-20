@@ -10,6 +10,7 @@ from .portfolio_state import Position, PositionStatus, PortfolioState
 @dataclass
 class RiskConfig:
     max_active_positions: int = 5
+    max_bonus_active_slots: int = 2
     max_positions_per_sector: int = 1
     stop_loss_pct: float = 0.05
     weekly_profit_goal: float = 500.0
@@ -50,6 +51,13 @@ def evaluate_position(
 
 def current_weekly_tier(week_realized_pnl: float, cfg: RiskConfig) -> float:
     return max(0.0, (int(week_realized_pnl // cfg.weekly_profit_goal) + 1) * cfg.weekly_profit_goal)
+
+
+def bonus_active_slots(prior_week_realized_pnl: float, cfg: RiskConfig) -> int:
+    surplus = prior_week_realized_pnl - cfg.weekly_profit_goal
+    if surplus <= 0:
+        return 0
+    return min(cfg.max_bonus_active_slots, int(surplus // cfg.weekly_profit_goal))
 
 
 def evaluate_profit_exits(
@@ -126,7 +134,10 @@ def evaluate_buy(
     if circuit_breaker_tripped(state.month_start_equity, total_equity, cfg):
         return BuyDecision(False, "monthly circuit breaker tripped", max_value)
 
-    if state.active_slot_count() >= cfg.max_active_positions:
+    effective_max_active_positions = cfg.max_active_positions + bonus_active_slots(
+        state.prior_week_realized_pnl, cfg
+    )
+    if state.active_slot_count() >= effective_max_active_positions:
         return BuyDecision(False, "no active slots available", max_value)
 
     if proposed_value > max_value:

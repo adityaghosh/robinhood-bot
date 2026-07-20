@@ -5,8 +5,9 @@ import pytest
 
 from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
 from robinhood_bot.risk_engine import (
-    RiskConfig, ExitAction, current_weekly_tier, evaluate_position, evaluate_profit_exits,
-    max_new_position_value, circuit_breaker_tripped, evaluate_buy, evaluate_sell,
+    RiskConfig, ExitAction, bonus_active_slots, current_weekly_tier, evaluate_position,
+    evaluate_profit_exits, max_new_position_value, circuit_breaker_tripped, evaluate_buy,
+    evaluate_sell,
 )
 
 
@@ -116,6 +117,29 @@ def test_circuit_breaker_ignored_when_month_start_equity_zero():
     assert circuit_breaker_tripped(month_start_equity=0.0, current_equity=9_000.0, cfg=cfg) is False
 
 
+def test_bonus_active_slots_zero_when_surplus_not_positive():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(500.0, cfg) == 0
+    assert bonus_active_slots(0.0, cfg) == 0
+    assert bonus_active_slots(-200.0, cfg) == 0
+
+
+def test_bonus_active_slots_grants_one_slot_at_exact_surplus_boundary():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(1_000.0, cfg) == 1
+
+
+def test_bonus_active_slots_grants_multiple_slots_for_larger_surplus():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(1_200.0, cfg) == 1
+    assert bonus_active_slots(1_700.0, cfg) == 2
+
+
+def test_bonus_active_slots_caps_at_max_bonus_active_slots():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(5_000.0, cfg) == 2
+
+
 def test_evaluate_buy_rejects_when_symbol_already_held():
     cfg = RiskConfig()
     state = PortfolioState(cash=10_000.0, active_positions=[
@@ -194,6 +218,38 @@ def test_evaluate_buy_approves_when_sector_none_bypasses_concentration_check():
     ])
     decision = evaluate_buy(state, "UPRO", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None)
     assert decision.approved is True
+
+
+def test_evaluate_buy_approves_when_bonus_slot_from_prior_week_surplus_allows_it():
+    cfg = RiskConfig(
+        max_active_positions=1, weekly_profit_goal=500.0, max_bonus_active_slots=2,
+        max_position_pct=0.20,
+    )
+    state = PortfolioState(
+        cash=10_000.0, month_start_equity=10_000.0, prior_week_realized_pnl=1_200.0,
+        active_positions=[
+            Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
+        ],
+    )
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials")
+    assert decision.approved is True
+
+
+def test_evaluate_buy_rejects_when_even_boosted_effective_cap_is_reached():
+    cfg = RiskConfig(
+        max_active_positions=1, weekly_profit_goal=500.0, max_bonus_active_slots=2,
+        max_position_pct=0.20,
+    )
+    state = PortfolioState(
+        cash=10_000.0, month_start_equity=10_000.0, prior_week_realized_pnl=1_200.0,
+        active_positions=[
+            Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology"),
+            Position("MSFT", 5, 300.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Financials"),
+        ],
+    )
+    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Energy")
+    assert decision.approved is False
+    assert "no active slots available" in decision.reason
 
 
 def test_evaluate_sell_approves_active_holding():
