@@ -1,3 +1,4 @@
+import json
 from datetime import date
 
 from robinhood_bot import ledger
@@ -51,3 +52,65 @@ def test_append_trade_log_writes_header_once(tmp_path):
     contents = path.read_text().splitlines()
     assert contents[0] == "timestamp,action,symbol,qty,price,reason"
     assert len(contents) == 3
+
+
+def test_save_and_load_round_trip_preserves_week_tracking(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(cash=8_000.0, week="2026-W28", week_realized_pnl=350.0)
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.week == "2026-W28"
+    assert loaded.week_realized_pnl == 350.0
+
+
+def test_save_and_load_round_trip_preserves_sector(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(
+        cash=8_000.0,
+        active_positions=[
+            Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
+        ],
+    )
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.active_positions[0].sector == "Technology"
+
+
+def test_load_state_defaults_missing_sector_to_none_for_old_ledger_files(tmp_path):
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({
+        "cash": 5_000.0,
+        "active_positions": [{
+            "symbol": "AAPL", "qty": 10, "entry_price": 100.0,
+            "entry_date": "2026-07-01", "status": "ACTIVE", "underwater_since": None,
+        }],
+        "long_hold_positions": [],
+        "month": "", "month_start_equity": 0.0, "week": "", "week_realized_pnl": 0.0,
+    }))
+
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.active_positions[0].sector is None
+
+
+def test_save_and_load_round_trip_preserves_prior_week_realized_pnl(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(cash=8_000.0, prior_week_realized_pnl=1_200.0)
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.prior_week_realized_pnl == 1_200.0
+
+
+def test_load_state_defaults_missing_prior_week_realized_pnl_to_zero_for_old_ledger_files(tmp_path):
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({
+        "cash": 5_000.0, "active_positions": [], "long_hold_positions": [],
+        "month": "", "month_start_equity": 0.0, "week": "", "week_realized_pnl": 0.0,
+    }))
+
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.prior_week_realized_pnl == 0.0

@@ -3,4 +3,6 @@ __pycache__/
 *.pyc
 data/*.csv
 data/*.json
+data/backtests/
+data/historical_price_cache/
 .pytest_cache/

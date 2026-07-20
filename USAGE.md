@@ -2,8 +2,9 @@
 
 An LLM-assisted short-term trading bot for a curated universe of
 well-established stocks (top ~100 S&P 500 + top ~20 Nasdaq-100 by market
-cap) plus leveraged full-index funds (TQQQ, UPRO, SOXL), pursuing a
-monthly return target. Claude Code is the decision-making agent; Python
+cap) plus leveraged broad-market index funds (TQQQ, UPRO) — no leveraged
+sector funds — pursuing a monthly return target. Claude Code is the
+decision-making agent; Python
 enforces every hard risk limit and Claude cannot override a rejected
 trade. Starts in paper mode (simulated fills against real, live prices)
 with a one-line switch to live trading once trusted.
@@ -74,6 +75,60 @@ Both skills print a plain-English summary of what they did (or didn't
 do, and why) at the end — that's what you should actually read each day.
 Full skill text: `.claude/skills/robinhood-trading/SKILL.md` and
 `.claude/skills/robinhood-stop-loss-sweep/SKILL.md`.
+
+## Backtesting against historical data
+
+Before trusting the strategy with real (or even paper) money going
+forward, validate it against the past. Backtesting reuses the exact same
+ledger/risk-check/record-fill machinery as live/paper trading — it's
+"paper trading against history," not a separate system — so a strategy
+that works in a backtest is exercising the real risk engine, not a
+simplified stand-in.
+
+Two modes, both under `cli.py backtest ...`:
+
+**Deterministic backtest** — a fast, fully-automated Python loop with no
+LLM involvement. Can run months or years of history in seconds (after
+the first, cold-cache run for a given date range and symbol set — see
+"Where your data lives" below).
+
+```bash
+# See which dates it'll actually simulate (weekends/holidays excluded,
+# derived from SPY's own trading history).
+python -m robinhood_bot.cli backtest trading-days --start 2026-01-01 --end 2026-06-30
+
+# Run it. Each --run id gets its own isolated ledger, so you can run
+# multiple backtests side by side without them interfering.
+python -m robinhood_bot.cli backtest run --run jan-jun-2026 --start 2026-01-01 --end 2026-06-30
+
+# Summarize: total return, max drawdown, win/loss count, and a
+# buy-and-hold-SPY benchmark for the same window.
+python -m robinhood_bot.cli backtest report --run jan-jun-2026
+```
+
+The deterministic run always trades within *today's* live candidate
+universe (top S&P 500 + Nasdaq-100 + leveraged funds), applied
+retroactively across the whole historical window — not the universe as
+it actually existed on each past date. This is a known, accepted
+simplification (survivorship bias), not a bug; see
+`docs/superpowers/specs/2026-07-19-backtesting-design.md` for the full
+rationale and other non-goals.
+
+**LLM-driven backtest** — runs the actual daily-cycle skill's research
+and decision logic (the same judgment `/robinhood-trading` uses live),
+day by day, over historical data instead of live Robinhood MCP quotes.
+No MCP connection needed for this mode. Costs one reasoning pass per
+simulated day, so use a realistically short window (weeks, not years):
+
+```
+/robinhood-trading --backtest --run RUN_ID --start 2026-01-01 --end 2026-01-31
+```
+
+Full step-by-step mapping from the live daily cycle to its backtest
+equivalents: the "Backtest Mode" section of
+`.claude/skills/robinhood-trading/SKILL.md`.
+
+Both modes finish with `cli.py backtest report --run RUN_ID`.
 
 ## Switching to live trading
 
@@ -158,13 +213,21 @@ history, not something the repo tracks:
 - `data/trade_log.csv` — append-only audit trail of every fill.
 - `data/universe_cache.json` — cached index membership + market caps,
   refreshed weekly.
+- `data/backtests/<run_id>/` — one isolated `ledger.json`, `trade_log.csv`,
+  and `equity_curve.csv` per backtest run, keyed by the `--run` id you
+  chose. Never touches the live `data/ledger.json`.
+- `data/historical_price_cache/` — shared, run-independent OHLC cache
+  (one file per symbol). This is what makes a second backtest over an
+  overlapping date range fast — delete it if you ever need a clean
+  re-fetch from `yfinance`.
 
 ## Current status
 
-- Core engine, universe ranking, and both skills are built and tested
-  (`pytest` — currently 87 tests, all local/network-free except the
-  universe module's live Wikipedia/yfinance calls, which are verified
-  manually rather than by automated test).
+- Core engine, universe ranking, both skills, and backtesting are built
+  and tested (`pytest` — currently 122 tests, all local/network-free
+  except the live Wikipedia/yfinance-touching classes in
+  `universe_client.py`, which are verified manually rather than by
+  automated test).
 - **Not yet done:** connecting the Robinhood MCP server (step 2 above —
   you do this), a first manual paper-mode run to validate the whole loop
   end to end, and scheduled/automated invocation (both skills are

@@ -18,6 +18,7 @@ def _position_to_dict(position: Position) -> dict:
         "underwater_since": (
             position.underwater_since.isoformat() if position.underwater_since else None
         ),
+        "sector": position.sector,
     }
 
 
@@ -31,6 +32,7 @@ def _position_from_dict(data: dict) -> Position:
         underwater_since=(
             date.fromisoformat(data["underwater_since"]) if data["underwater_since"] else None
         ),
+        sector=data.get("sector"),
     )
 
 
@@ -41,6 +43,9 @@ def state_to_dict(state: PortfolioState) -> dict:
         "long_hold_positions": [_position_to_dict(p) for p in state.long_hold_positions],
         "month": state.month,
         "month_start_equity": state.month_start_equity,
+        "week": state.week,
+        "week_realized_pnl": state.week_realized_pnl,
+        "prior_week_realized_pnl": state.prior_week_realized_pnl,
     }
 
 
@@ -51,6 +56,9 @@ def state_from_dict(data: dict) -> PortfolioState:
         long_hold_positions=[_position_from_dict(p) for p in data["long_hold_positions"]],
         month=data.get("month", ""),
         month_start_equity=data.get("month_start_equity", 0.0),
+        week=data.get("week", ""),
+        week_realized_pnl=data.get("week_realized_pnl", 0.0),
+        prior_week_realized_pnl=data.get("prior_week_realized_pnl", 0.0),
     )
 
 

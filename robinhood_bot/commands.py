@@ -4,8 +4,11 @@ from datetime import date
 from pathlib import Path
 
 from . import ledger
-from .portfolio_state import Position, PositionStatus, roll_month_if_needed
-from .risk_engine import RiskConfig, ExitAction, evaluate_buy, evaluate_position, evaluate_sell
+from .portfolio_state import Position, PositionStatus, roll_month_if_needed, roll_week_if_needed
+from .risk_engine import (
+    RiskConfig, ExitAction, bonus_active_slots, current_weekly_tier, evaluate_buy,
+    evaluate_position, evaluate_profit_exits, evaluate_sell,
+)
 
 
 def _position_value(position, prices: dict[str, float]) -> tuple[float, bool]:
@@ -36,6 +39,7 @@ def cmd_state(
     prices: dict[str, float],
     today: date,
     trading_mode: str,
+    cfg: RiskConfig,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
 
@@ -45,6 +49,7 @@ def cmd_state(
     total_equity = state.cash + positions_value
 
     roll_month_if_needed(state, today, total_equity)
+    roll_week_if_needed(state, today)
     ledger.save_state(ledger_path, state)
 
     return {
@@ -60,6 +65,13 @@ def cmd_state(
             if state.month_start_equity > 0
             else 0.0
         ),
+        "week": state.week,
+        "week_realized_pnl": state.week_realized_pnl,
+        "week_profit_target": current_weekly_tier(state.week_realized_pnl, cfg),
+        "prior_week_realized_pnl": state.prior_week_realized_pnl,
+        "effective_max_active_positions": cfg.max_active_positions + bonus_active_slots(
+            state.prior_week_realized_pnl, cfg
+        ),
     }
 
 
@@ -71,6 +83,7 @@ def cmd_risk_check(
     proposed_value: float,
     prices: dict[str, float],
     cfg: RiskConfig,
+    sector: str | None = None,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
 
@@ -81,7 +94,7 @@ def cmd_risk_check(
     total_equity = state.cash + positions_value
 
     if action == "buy":
-        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg)
+        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector)
         return {
             "approved": decision.approved,
             "reason": decision.reason,
@@ -104,8 +117,10 @@ def cmd_record_fill(
     price: float,
     today: date,
     reason: str,
+    sector: str | None = None,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
+    roll_week_if_needed(state, today)
 
     if action == "buy":
         if state.is_held(symbol):
@@ -121,6 +136,7 @@ def cmd_record_fill(
                 entry_price=price,
                 entry_date=today,
                 status=PositionStatus.ACTIVE,
+                sector=sector,
             )
         )
     elif action == "sell":
@@ -133,6 +149,7 @@ def cmd_record_fill(
                 "(partial sells are not supported)"
             )
         state.cash += position.qty * price
+        state.week_realized_pnl += (price - position.entry_price) * position.qty
         if position in state.active_positions:
             state.active_positions.remove(position)
         else:
@@ -183,7 +200,7 @@ def cmd_check_stop_losses(
             "new_status": evaluation.new_status.value,
         })
 
-        if not apply or evaluation.action == ExitAction.SELL:
+        if not apply:
             remaining_active.append(position)
             continue
 
@@ -196,6 +213,17 @@ def cmd_check_stop_losses(
             remaining_active.append(position)
 
     state.active_positions = remaining_active
+
+    profit_exits = evaluate_profit_exits(
+        state.active_positions + state.long_hold_positions, prices, state.week_realized_pnl, cfg,
+    )
+    for position in profit_exits:
+        results.append({
+            "symbol": position.symbol,
+            "action": "SELL",
+            "current_status": position.status.value,
+            "new_status": position.status.value,
+        })
 
     if apply:
         ledger.save_state(ledger_path, state)

@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import io
 import urllib.request
+from datetime import date, timedelta
 
 import pandas as pd
 import yfinance as yf
 
+from .backtest_data import HistoricalBar
 from .universe import Bar
 
 SP500_WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -55,6 +57,21 @@ class LiveMarketDataClient:
                 market_caps[ticker] = float(market_cap)
         return market_caps
 
+    def fetch_sector(self, ticker: str) -> str | None:
+        try:
+            # NOTE: deliberately reads GICS *industry* (e.g. "Semiconductors",
+            # "Computer Hardware"), not the broader "sector" (e.g.
+            # "Technology") -- the concentration check needs sub-industry
+            # granularity so a semiconductor position doesn't block an
+            # unrelated Technology name (e.g. IT services) from being held
+            # at the same time. Neither is available on fast_info -- only
+            # the full (slower) .info property exposes this classification.
+            info = yf.Ticker(ticker).info
+            sector = info.get("industry")
+        except Exception:
+            return None
+        return sector if sector else None
+
     def fetch_daily_bars(self, ticker: str, lookback_days: int) -> list[Bar]:
         try:
             history = yf.Ticker(ticker).history(
@@ -69,3 +86,27 @@ class LiveMarketDataClient:
             for row in history.itertuples()
         ]
         return bars[-lookback_days:]
+
+
+class LiveHistoricalDataFetcher:
+    def fetch_history(self, symbol: str, start: date, end: date) -> list[HistoricalBar]:
+        try:
+            # yfinance's `end` is exclusive, so add a day to make our own
+            # [start, end] contract inclusive of `end`.
+            history = yf.Ticker(symbol).history(
+                start=start.isoformat(), end=(end + timedelta(days=1)).isoformat(), timeout=15
+            )
+        except Exception:
+            return []
+        if history.empty:
+            return []
+        return [
+            HistoricalBar(
+                date=row.Index.date(),
+                open=float(row.Open),
+                high=float(row.High),
+                low=float(row.Low),
+                close=float(row.Close),
+            )
+            for row in history.itertuples()
+        ]

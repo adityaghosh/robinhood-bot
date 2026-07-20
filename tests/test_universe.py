@@ -28,7 +28,7 @@ def test_universe_config_defaults():
     cfg = UniverseConfig()
     assert cfg.top_n_sp500 == 100
     assert cfg.top_n_nasdaq100 == 20
-    assert cfg.leveraged_funds == ["TQQQ", "UPRO", "SOXL"]
+    assert cfg.leveraged_funds == ["TQQQ", "UPRO"]
     assert cfg.realized_vol_window_days == 20
     assert cfg.atr_window_days == 14
     assert cfg.cache_max_age_days == 7
@@ -174,11 +174,12 @@ from robinhood_bot.universe import get_membership, refresh_membership
 
 
 class FakeMarketDataClient:
-    def __init__(self, sp500=None, nasdaq100=None, market_caps=None, bars=None, raise_on_fetch=False):
+    def __init__(self, sp500=None, nasdaq100=None, market_caps=None, bars=None, sectors=None, raise_on_fetch=False):
         self.sp500 = sp500 or []
         self.nasdaq100 = nasdaq100 or []
         self.market_caps = market_caps or {}
         self.bars = bars or {}
+        self.sectors = sectors or {}
         self.raise_on_fetch = raise_on_fetch
         self.calls = []
 
@@ -201,6 +202,57 @@ class FakeMarketDataClient:
     def fetch_daily_bars(self, ticker, lookback_days):
         self.calls.append(f"bars:{ticker}")
         return self.bars.get(ticker, [])
+
+    def fetch_sector(self, ticker):
+        self.calls.append(f"sector:{ticker}")
+        return self.sectors.get(ticker)
+
+
+from robinhood_bot.universe import SectorCache, load_sector_cache, save_sector_cache, get_sector
+
+
+def test_load_sector_cache_returns_none_when_file_missing(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    assert load_sector_cache(path) is None
+
+
+def test_save_and_load_sector_cache_round_trip(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    save_sector_cache(path, SectorCache(sectors={"AAPL": "Technology"}))
+    loaded = load_sector_cache(path)
+    assert loaded.sectors == {"AAPL": "Technology"}
+
+
+def test_get_sector_returns_cached_value_without_fetching(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    save_sector_cache(path, SectorCache(sectors={"AAPL": "Technology"}))
+    client = FakeMarketDataClient()
+
+    sector = get_sector(client, path, "AAPL")
+
+    assert sector == "Technology"
+    assert "sector:AAPL" not in client.calls
+
+
+def test_get_sector_fetches_and_caches_on_cache_miss(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    client = FakeMarketDataClient(sectors={"MSFT": "Technology"})
+
+    sector = get_sector(client, path, "MSFT")
+
+    assert sector == "Technology"
+    reloaded = load_sector_cache(path)
+    assert reloaded.sectors == {"MSFT": "Technology"}
+
+
+def test_get_sector_returns_none_and_does_not_cache_on_fetch_failure(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    client = FakeMarketDataClient(sectors={})
+
+    sector = get_sector(client, path, "UNKNOWN")
+
+    assert sector is None
+    assert load_sector_cache(path) is None
 
 
 def test_refresh_membership_dedupes_overlap_preferring_sp500_category():
@@ -287,6 +339,7 @@ from robinhood_bot.universe import build_universe
 
 def test_build_universe_ranks_by_realized_vol_when_mode_is_realized_vol(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     bars_low = [Bar(101.0, 99.0, 100.0), Bar(101.0, 99.5, 100.2), Bar(100.8, 99.6, 100.1)]
     bars_high = [Bar(110.0, 90.0, 100.0), Bar(115.0, 85.0, 105.0), Bar(120.0, 80.0, 95.0)]
@@ -294,13 +347,14 @@ def test_build_universe_ranks_by_realized_vol_when_mode_is_realized_vol(tmp_path
         sp500=["LOW", "HIGH"], nasdaq100=[],
         market_caps={"LOW": 100.0, "HIGH": 200.0},
         bars={"LOW": bars_low, "HIGH": bars_high},
+        sectors={"LOW": "Technology", "HIGH": "Technology"},
     )
     cfg = UniverseConfig(
         top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[],
         realized_vol_window_days=2, atr_window_days=2, ranking_mode="realized_vol",
     )
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["HIGH", "LOW"]
     assert candidates[0].combined_rank == 1.0
@@ -309,34 +363,39 @@ def test_build_universe_ranks_by_realized_vol_when_mode_is_realized_vol(tmp_path
 
 def test_build_universe_drops_symbols_with_no_bars(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     client = FakeMarketDataClient(
         sp500=["A", "B"], nasdaq100=[],
         market_caps={"A": 100.0, "B": 200.0},
         bars={"A": [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]},
+        sectors={"A": "Technology", "B": "Technology"},
     )
     cfg = UniverseConfig(top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[])
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["A"]
 
 
 def test_build_universe_includes_leveraged_funds(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     bars = [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]
     client = FakeMarketDataClient(sp500=[], nasdaq100=[], market_caps={}, bars={"TQQQ": bars})
     cfg = UniverseConfig(top_n_sp500=0, top_n_nasdaq100=0, leveraged_funds=["TQQQ"])
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["TQQQ"]
     assert candidates[0].category == "leveraged"
+    assert candidates[0].sector is None
 
 
 def test_build_universe_both_mode_averages_percentile_ranks(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     bars_a = [Bar(101.0, 99.0, 100.0), Bar(101.0, 99.5, 100.2), Bar(100.8, 99.6, 100.1)]
     bars_b = [Bar(110.0, 90.0, 100.0), Bar(115.0, 85.0, 105.0), Bar(120.0, 80.0, 95.0)]
@@ -344,14 +403,51 @@ def test_build_universe_both_mode_averages_percentile_ranks(tmp_path):
         sp500=["A", "B"], nasdaq100=[],
         market_caps={"A": 100.0, "B": 200.0},
         bars={"A": bars_a, "B": bars_b},
+        sectors={"A": "Technology", "B": "Financials"},
     )
     cfg = UniverseConfig(
         top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[],
         realized_vol_window_days=2, atr_window_days=2, ranking_mode="both",
     )
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["B", "A"]
     assert candidates[0].combined_rank == 1.0
     assert candidates[1].combined_rank == 0.0
+
+
+def test_build_universe_drops_candidate_with_unresolvable_sector(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]
+    client = FakeMarketDataClient(
+        sp500=["A", "B"], nasdaq100=[],
+        market_caps={"A": 100.0, "B": 200.0},
+        bars={"A": bars, "B": bars},
+        sectors={"A": "Technology"},
+    )
+    cfg = UniverseConfig(top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert [c.symbol for c in candidates] == ["A"]
+
+
+def test_build_universe_includes_resolved_sector_on_candidate(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]
+    client = FakeMarketDataClient(
+        sp500=["A"], nasdaq100=[],
+        market_caps={"A": 100.0},
+        bars={"A": bars},
+        sectors={"A": "Healthcare"},
+    )
+    cfg = UniverseConfig(top_n_sp500=1, top_n_nasdaq100=1, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert candidates[0].sector == "Healthcare"

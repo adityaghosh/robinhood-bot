@@ -12,7 +12,7 @@ from typing import Protocol
 class UniverseConfig:
     top_n_sp500: int = 100
     top_n_nasdaq100: int = 20
-    leveraged_funds: list[str] = field(default_factory=lambda: ["TQQQ", "UPRO", "SOXL"])
+    leveraged_funds: list[str] = field(default_factory=lambda: ["TQQQ", "UPRO"])
     realized_vol_window_days: int = 20
     atr_window_days: int = 14
     cache_max_age_days: int = 7
@@ -40,6 +40,11 @@ class UniverseCache:
 
 
 @dataclass
+class SectorCache:
+    sectors: dict[str, str]
+
+
+@dataclass
 class Candidate:
     symbol: str
     category: str
@@ -47,6 +52,7 @@ class Candidate:
     realized_vol: float
     atr_pct: float
     combined_rank: float
+    sector: str | None = None
 
 
 class MarketDataClient(Protocol):
@@ -54,6 +60,7 @@ class MarketDataClient(Protocol):
     def fetch_nasdaq100_tickers(self) -> list[str]: ...
     def fetch_market_caps(self, tickers: list[str]) -> dict[str, float]: ...
     def fetch_daily_bars(self, ticker: str, lookback_days: int) -> list[Bar]: ...
+    def fetch_sector(self, ticker: str) -> str | None: ...
 
 
 def _cached_member_to_dict(member: CachedMember) -> dict:
@@ -89,6 +96,41 @@ def save_cache(path: Path, cache: UniverseCache) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
         json.dump(cache_to_dict(cache), f, indent=2)
+
+
+def sector_cache_to_dict(cache: SectorCache) -> dict:
+    return {"sectors": cache.sectors}
+
+
+def sector_cache_from_dict(data: dict) -> SectorCache:
+    return SectorCache(sectors=data["sectors"])
+
+
+def load_sector_cache(path: Path) -> SectorCache | None:
+    if not path.exists():
+        return None
+    with path.open("r") as f:
+        return sector_cache_from_dict(json.load(f))
+
+
+def save_sector_cache(path: Path, cache: SectorCache) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(sector_cache_to_dict(cache), f, indent=2)
+
+
+def get_sector(client: MarketDataClient, cache_path: Path, symbol: str) -> str | None:
+    cache = load_sector_cache(cache_path) or SectorCache(sectors={})
+    if symbol in cache.sectors:
+        return cache.sectors[symbol]
+
+    sector = client.fetch_sector(symbol)
+    if sector is None:
+        return None
+
+    cache.sectors[symbol] = sector
+    save_sector_cache(cache_path, cache)
+    return sector
 
 
 def is_cache_stale(cache: UniverseCache | None, today: date, max_age_days: int) -> bool:
@@ -179,13 +221,26 @@ def get_membership(
 def build_universe(
     client: MarketDataClient,
     cache_path: Path,
+    sector_cache_path: Path,
     cfg: UniverseConfig,
     today: date,
     force_refresh: bool = False,
 ) -> list[Candidate]:
     members = get_membership(client, cache_path, cfg, today, force_refresh)
+
+    sectors: dict[str, str | None] = {}
+    resolved_members = []
+    for member in members:
+        sector = get_sector(client, sector_cache_path, member.symbol)
+        if sector is None:
+            continue
+        sectors[member.symbol] = sector
+        resolved_members.append(member)
+
     leveraged = [CachedMember(symbol, "leveraged", 0.0) for symbol in cfg.leveraged_funds]
-    all_members = members + leveraged
+    for member in leveraged:
+        sectors[member.symbol] = None
+    all_members = resolved_members + leveraged
 
     lookback = max(cfg.realized_vol_window_days, cfg.atr_window_days) + 1
     realized_vols: dict[str, float] = {}
@@ -219,6 +274,7 @@ def build_universe(
             realized_vol=realized_vols[member.symbol],
             atr_pct=atr_pcts[member.symbol],
             combined_rank=score,
+            sector=sectors[member.symbol],
         ))
 
     candidates.sort(key=lambda c: c.combined_rank, reverse=True)

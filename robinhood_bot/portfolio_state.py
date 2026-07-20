@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from enum import Enum
 
 
@@ -19,6 +19,7 @@ class Position:
     entry_date: date
     status: PositionStatus
     underwater_since: date | None = None
+    sector: str | None = None
 
     @property
     def cost_basis(self) -> float:
@@ -32,6 +33,9 @@ class PortfolioState:
     long_hold_positions: list[Position] = field(default_factory=list)
     month: str = ""
     month_start_equity: float = 0.0
+    week: str = ""
+    week_realized_pnl: float = 0.0
+    prior_week_realized_pnl: float = 0.0
 
     def active_slot_count(self) -> int:
         return len(self.active_positions)
@@ -60,4 +64,18 @@ def roll_month_if_needed(state: PortfolioState, today: date, current_equity: flo
     if state.month != current_month:
         state.month = current_month
         state.month_start_equity = current_equity
+    return state
+
+
+def roll_week_if_needed(state: PortfolioState, today: date) -> PortfolioState:
+    iso_year, iso_week, _ = today.isocalendar()
+    current_week = f"{iso_year:04d}-W{iso_week:02d}"
+    if state.week != current_week:
+        prior_year, prior_week, _ = (today - timedelta(weeks=1)).isocalendar()
+        immediately_preceding_week = f"{prior_year:04d}-W{prior_week:02d}"
+        state.prior_week_realized_pnl = (
+            state.week_realized_pnl if state.week == immediately_preceding_week else 0.0
+        )
+        state.week = current_week
+        state.week_realized_pnl = 0.0
     return state

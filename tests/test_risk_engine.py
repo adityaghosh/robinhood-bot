@@ -4,7 +4,11 @@ from datetime import date, timedelta
 import pytest
 
 from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
-from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position, max_new_position_value, circuit_breaker_tripped, evaluate_buy, evaluate_sell
+from robinhood_bot.risk_engine import (
+    RiskConfig, ExitAction, bonus_active_slots, current_weekly_tier, evaluate_position,
+    evaluate_profit_exits, max_new_position_value, circuit_breaker_tripped, evaluate_buy,
+    evaluate_sell,
+)
 
 
 def _position(**overrides):
@@ -20,15 +24,8 @@ def _position(**overrides):
     return Position(**defaults)
 
 
-def test_profit_target_hit_triggers_sell():
-    cfg = RiskConfig(profit_target_pct=0.08)
-    position = _position(entry_price=100.0)
-    result = evaluate_position(position, current_price=110.0, today=date(2026, 7, 10), cfg=cfg)
-    assert result.action == ExitAction.SELL
-
-
 def test_small_loss_within_stop_loss_stays_active():
-    cfg = RiskConfig(stop_loss_pct=0.05, profit_target_pct=0.08)
+    cfg = RiskConfig(stop_loss_pct=0.05)
     position = _position(entry_price=100.0)
     result = evaluate_position(position, current_price=97.0, today=date(2026, 7, 10), cfg=cfg)
     assert result.action == ExitAction.HOLD
@@ -71,7 +68,7 @@ def test_waiting_past_grace_period_promotes_to_long_hold():
 
 
 def test_recovery_from_waiting_returns_to_active():
-    cfg = RiskConfig(stop_loss_pct=0.05, profit_target_pct=0.08)
+    cfg = RiskConfig(stop_loss_pct=0.05)
     position = _position(
         entry_price=100.0, status=PositionStatus.WAITING, underwater_since=date(2026, 7, 5)
     )
@@ -120,12 +117,35 @@ def test_circuit_breaker_ignored_when_month_start_equity_zero():
     assert circuit_breaker_tripped(month_start_equity=0.0, current_equity=9_000.0, cfg=cfg) is False
 
 
+def test_bonus_active_slots_zero_when_surplus_not_positive():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(500.0, cfg) == 0
+    assert bonus_active_slots(0.0, cfg) == 0
+    assert bonus_active_slots(-200.0, cfg) == 0
+
+
+def test_bonus_active_slots_grants_one_slot_at_exact_surplus_boundary():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(1_000.0, cfg) == 1
+
+
+def test_bonus_active_slots_grants_multiple_slots_for_larger_surplus():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(1_200.0, cfg) == 1
+    assert bonus_active_slots(1_700.0, cfg) == 2
+
+
+def test_bonus_active_slots_caps_at_max_bonus_active_slots():
+    cfg = RiskConfig(weekly_profit_goal=500.0, max_bonus_active_slots=2)
+    assert bonus_active_slots(5_000.0, cfg) == 2
+
+
 def test_evaluate_buy_rejects_when_symbol_already_held():
     cfg = RiskConfig()
     state = PortfolioState(cash=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
     ])
-    decision = evaluate_buy(state, "AAPL", proposed_value=500.0, total_equity=10_000.0, cfg=cfg)
+    decision = evaluate_buy(state, "AAPL", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None)
     assert decision.approved is False
     assert "already held" in decision.reason
 
@@ -133,7 +153,7 @@ def test_evaluate_buy_rejects_when_symbol_already_held():
 def test_evaluate_buy_rejects_when_circuit_breaker_tripped():
     cfg = RiskConfig(monthly_circuit_breaker_pct=0.10)
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=8_000.0, cfg=cfg)
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=8_000.0, cfg=cfg, sector=None)
     assert decision.approved is False
     assert "circuit breaker" in decision.reason
 
@@ -143,7 +163,7 @@ def test_evaluate_buy_rejects_when_no_active_slots():
     state = PortfolioState(cash=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
     ])
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg)
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None)
     assert decision.approved is False
     assert "slots" in decision.reason
 
@@ -151,7 +171,7 @@ def test_evaluate_buy_rejects_when_no_active_slots():
 def test_evaluate_buy_rejects_when_oversized():
     cfg = RiskConfig(max_position_pct=0.20)
     state = PortfolioState(cash=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=5_000.0, total_equity=10_000.0, cfg=cfg)
+    decision = evaluate_buy(state, "MSFT", proposed_value=5_000.0, total_equity=10_000.0, cfg=cfg, sector=None)
     assert decision.approved is False
     assert "exceeds max position size" in decision.reason
 
@@ -159,7 +179,7 @@ def test_evaluate_buy_rejects_when_oversized():
 def test_evaluate_buy_rejects_when_insufficient_cash():
     cfg = RiskConfig(max_position_pct=0.50)
     state = PortfolioState(cash=1_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=2_000.0, total_equity=10_000.0, cfg=cfg)
+    decision = evaluate_buy(state, "MSFT", proposed_value=2_000.0, total_equity=10_000.0, cfg=cfg, sector=None)
     assert decision.approved is False
     assert "insufficient cash" in decision.reason
 
@@ -167,9 +187,69 @@ def test_evaluate_buy_rejects_when_insufficient_cash():
 def test_evaluate_buy_approves_happy_path():
     cfg = RiskConfig(max_position_pct=0.20)
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg)
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None)
     assert decision.approved is True
     assert decision.max_position_value == 2_000.0
+
+
+def test_evaluate_buy_rejects_when_sector_concentration_limit_reached():
+    cfg = RiskConfig(max_positions_per_sector=1)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
+        Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
+    ])
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector="Technology")
+    assert decision.approved is False
+    assert "sector concentration" in decision.reason
+
+
+def test_evaluate_buy_approves_when_different_sector_held():
+    cfg = RiskConfig(max_positions_per_sector=1, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
+        Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
+    ])
+    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials")
+    assert decision.approved is True
+
+
+def test_evaluate_buy_approves_when_sector_none_bypasses_concentration_check():
+    cfg = RiskConfig(max_positions_per_sector=1, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
+        Position("TQQQ", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector=None)
+    ])
+    decision = evaluate_buy(state, "UPRO", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    assert decision.approved is True
+
+
+def test_evaluate_buy_approves_when_bonus_slot_from_prior_week_surplus_allows_it():
+    cfg = RiskConfig(
+        max_active_positions=1, weekly_profit_goal=500.0, max_bonus_active_slots=2,
+        max_position_pct=0.20,
+    )
+    state = PortfolioState(
+        cash=10_000.0, month_start_equity=10_000.0, prior_week_realized_pnl=1_200.0,
+        active_positions=[
+            Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
+        ],
+    )
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials")
+    assert decision.approved is True
+
+
+def test_evaluate_buy_rejects_when_even_boosted_effective_cap_is_reached():
+    cfg = RiskConfig(
+        max_active_positions=1, weekly_profit_goal=500.0, max_bonus_active_slots=2,
+        max_position_pct=0.20,
+    )
+    state = PortfolioState(
+        cash=10_000.0, month_start_equity=10_000.0, prior_week_realized_pnl=1_200.0,
+        active_positions=[
+            Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology"),
+            Position("MSFT", 5, 300.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Financials"),
+        ],
+    )
+    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Energy")
+    assert decision.approved is False
+    assert "no active slots available" in decision.reason
 
 
 def test_evaluate_sell_approves_active_holding():
@@ -192,3 +272,73 @@ def test_evaluate_sell_rejects_unheld_symbol():
     state = PortfolioState(cash=0.0)
     decision = evaluate_sell(state, "NFLX")
     assert decision.approved is False
+
+
+def test_current_weekly_tier_at_zero_realized():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(0.0, cfg) == 500.0
+
+
+def test_current_weekly_tier_escalates_past_first_goal():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(520.0, cfg) == 1000.0
+
+
+def test_current_weekly_tier_handles_negative_realized_pnl():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(-200.0, cfg) == 0.0
+
+
+def test_current_weekly_tier_clamps_deep_negative_realized_pnl_to_zero():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(-600.0, cfg) == 0.0
+
+
+def test_evaluate_profit_exits_sells_single_winner_reaching_tier():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={"AAPL": 160.0}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == [position]
+
+
+def test_evaluate_profit_exits_sells_biggest_winners_first_until_tier_cleared():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    big = _position(symbol="BIG", qty=10, entry_price=100.0)
+    medium = _position(symbol="MED", qty=10, entry_price=100.0)
+    small = _position(symbol="SML", qty=10, entry_price=100.0)
+
+    result = evaluate_profit_exits(
+        [small, big, medium],
+        prices={"BIG": 140.0, "MED": 120.0, "SML": 105.0},
+        week_realized_pnl=0.0, cfg=cfg,
+    )
+
+    assert result == [big, medium]
+
+
+def test_evaluate_profit_exits_escalates_tier_when_goal_already_banked():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={"AAPL": 150.0}, week_realized_pnl=520.0, cfg=cfg)
+    assert result == [position]
+
+
+def test_evaluate_profit_exits_sells_nothing_without_positive_gains():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={"AAPL": 95.0}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == []
+
+
+def test_evaluate_profit_exits_skips_candidate_with_missing_quote():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == []
+
+
+def test_evaluate_profit_exits_treats_long_hold_positions_as_eligible():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    long_hold = _position(symbol="TSLA", qty=5, entry_price=200.0, status=PositionStatus.LONG_HOLD)
+    result = evaluate_profit_exits([long_hold], prices={"TSLA": 320.0}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == [long_hold]

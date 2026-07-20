@@ -10,8 +10,10 @@ from .portfolio_state import Position, PositionStatus, PortfolioState
 @dataclass
 class RiskConfig:
     max_active_positions: int = 5
+    max_bonus_active_slots: int = 2
+    max_positions_per_sector: int = 1
     stop_loss_pct: float = 0.05
-    profit_target_pct: float = 0.08
+    weekly_profit_goal: float = 500.0
     grace_period_days: int = 5
     max_position_pct: float = 0.20
     min_position_pct: float = 0.05
@@ -37,9 +39,6 @@ def evaluate_position(
 ) -> PositionEvaluation:
     pnl_pct = (current_price - position.entry_price) / position.entry_price
 
-    if pnl_pct >= cfg.profit_target_pct:
-        return PositionEvaluation(ExitAction.SELL, position.status, None)
-
     if pnl_pct <= -cfg.stop_loss_pct:
         underwater_since = position.underwater_since or today
         days_underwater = (today - underwater_since).days
@@ -48,6 +47,41 @@ def evaluate_position(
         return PositionEvaluation(ExitAction.HOLD, PositionStatus.WAITING, underwater_since)
 
     return PositionEvaluation(ExitAction.HOLD, PositionStatus.ACTIVE, None)
+
+
+def current_weekly_tier(week_realized_pnl: float, cfg: RiskConfig) -> float:
+    return max(0.0, (int(week_realized_pnl // cfg.weekly_profit_goal) + 1) * cfg.weekly_profit_goal)
+
+
+def bonus_active_slots(prior_week_realized_pnl: float, cfg: RiskConfig) -> int:
+    surplus = prior_week_realized_pnl - cfg.weekly_profit_goal
+    if surplus <= 0:
+        return 0
+    return min(cfg.max_bonus_active_slots, int(surplus // cfg.weekly_profit_goal))
+
+
+def evaluate_profit_exits(
+    positions: list[Position], prices: dict[str, float], week_realized_pnl: float, cfg: RiskConfig,
+) -> list[Position]:
+    gains = []
+    for position in positions:
+        price = prices.get(position.symbol)
+        if price is None:
+            continue
+        gain = (price - position.entry_price) * position.qty
+        if gain > 0:
+            gains.append((gain, position))
+    gains.sort(key=lambda g: g[0], reverse=True)
+
+    tier = current_weekly_tier(week_realized_pnl, cfg)
+    to_sell = []
+    running = week_realized_pnl
+    for gain, position in gains:
+        if running >= tier:
+            break
+        to_sell.append(position)
+        running += gain
+    return to_sell
 
 
 def max_new_position_value(
@@ -81,16 +115,29 @@ def evaluate_buy(
     proposed_value: float,
     total_equity: float,
     cfg: RiskConfig,
+    sector: str | None,
 ) -> BuyDecision:
     max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
 
     if state.is_held(symbol):
         return BuyDecision(False, "symbol already held", max_value)
 
+    if sector is not None:
+        sector_count = sum(1 for p in state.active_positions if p.sector == sector)
+        if sector_count >= cfg.max_positions_per_sector:
+            return BuyDecision(
+                False,
+                f"sector concentration: already at the {cfg.max_positions_per_sector}-position limit for {sector}",
+                max_value,
+            )
+
     if circuit_breaker_tripped(state.month_start_equity, total_equity, cfg):
         return BuyDecision(False, "monthly circuit breaker tripped", max_value)
 
-    if state.active_slot_count() >= cfg.max_active_positions:
+    effective_max_active_positions = cfg.max_active_positions + bonus_active_slots(
+        state.prior_week_realized_pnl, cfg
+    )
+    if state.active_slot_count() >= effective_max_active_positions:
         return BuyDecision(False, "no active slots available", max_value)
 
     if proposed_value > max_value:
