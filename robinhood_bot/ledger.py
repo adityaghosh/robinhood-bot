@@ -18,6 +18,7 @@ def _position_to_dict(position: Position) -> dict:
         "underwater_since": (
             position.underwater_since.isoformat() if position.underwater_since else None
         ),
+        "sector": position.sector,
     }
 
 
@@ -31,6 +32,7 @@ def _position_from_dict(data: dict) -> Position:
         underwater_since=(
             date.fromisoformat(data["underwater_since"]) if data["underwater_since"] else None
         ),
+        sector=data.get("sector"),
     )
 
 

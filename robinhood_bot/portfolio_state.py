@@ -19,6 +19,7 @@ class Position:
     entry_date: date
     status: PositionStatus
     underwater_since: date | None = None
+    sector: str | None = None
 
     @property
     def cost_basis(self) -> float:
