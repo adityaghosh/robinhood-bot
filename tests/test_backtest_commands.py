@@ -483,6 +483,62 @@ def test_cmd_backtest_run_skips_same_sector_candidate_for_next_ranked(tmp_path):
     assert [r["symbol"] for r in rows] == ["JPM"]
 
 
+def test_cmd_backtest_run_fills_bonus_slot_from_prior_week_surplus(tmp_path):
+    # max_active_positions=1 alone would allow only ONE of these two candidates
+    # to be bought. prior_week_realized_pnl=1,200 with the default $500 goal
+    # grants exactly 1 bonus slot (surplus $700 -> 1), so the effective cap is
+    # 2 -- if the entries loop's free_slots calculation weren't updated to use
+    # the same effective cap as evaluate_buy, only one symbol would get bought
+    # here instead of both.
+    bars = {
+        "SPY": [HistoricalBar(date(2026, 1, 5), 400.0, 401.0, 399.0, 400.0)],
+        "AAPL2": [
+            HistoricalBar(date(2025, 12, 30), 98.0, 99.5, 97.5, 99.0),
+            HistoricalBar(date(2025, 12, 31), 99.0, 100.5, 98.5, 100.0),
+            HistoricalBar(date(2026, 1, 5), 100.0, 101.0, 99.0, 100.5),
+        ],
+        "JPM": [
+            HistoricalBar(date(2025, 12, 30), 148.0, 149.5, 147.5, 149.0),
+            HistoricalBar(date(2025, 12, 31), 149.0, 150.5, 148.5, 150.0),
+            HistoricalBar(date(2026, 1, 5), 150.0, 151.0, 149.0, 150.5),
+        ],
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars.get(symbol, []) if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, weekly_profit_goal=500.0, max_bonus_active_slots=2,
+        max_position_pct=0.5, min_position_pct=0.5, stop_loss_pct=0.5, grace_period_days=5,
+    )
+
+    # `week` is seeded to match the single trading day's own ISO week
+    # (2026-01-05 is ISO week "2026-W02") so `roll_week_if_needed` sees no
+    # week transition on this run and leaves the seeded
+    # `prior_week_realized_pnl` untouched -- a transition would otherwise
+    # overwrite it with the seeded `week_realized_pnl` (0.0).
+    paths = backtest_commands.resolve_run_paths("run_bonus", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=10_000.0,
+        week="2026-W02",
+        prior_week_realized_pnl=1_200.0,
+        month="2026-01",
+        month_start_equity=10_000.0,
+    ))
+
+    backtest_commands.cmd_backtest_run(
+        "run_bonus", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 5), end=date(2026, 1, 5),
+        candidate_symbols=["AAPL2", "JPM"], candidate_sectors={}, store=store, cfg=cfg,
+        vol_window_days=2, atr_window_days=2,
+    )
+
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+    symbols = {p.symbol for p in final_state.active_positions}
+    assert symbols == {"AAPL2", "JPM"}
+
+
 def test_cmd_backtest_report_computes_return_and_benchmark(tmp_path):
     paths = backtest_commands.resolve_run_paths("run1", tmp_path)
     paths.equity_curve.parent.mkdir(parents=True, exist_ok=True)

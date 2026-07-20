@@ -10,8 +10,8 @@ from . import commands, ledger
 from .backtest_data import HistoricalPriceStore
 from .portfolio_state import roll_month_if_needed, roll_week_if_needed
 from .risk_engine import (
-    ExitAction, RiskConfig, evaluate_buy, evaluate_position, evaluate_profit_exits,
-    max_new_position_value,
+    ExitAction, RiskConfig, bonus_active_slots, evaluate_buy, evaluate_position,
+    evaluate_profit_exits, max_new_position_value,
 )
 from .universe import average_true_range_pct, percentile_ranks, realized_volatility
 
@@ -218,7 +218,14 @@ def cmd_backtest_run(
             state = ledger.load_state(paths.ledger, starting_cash)
 
         # 3. Entries: fill free slots with the top-ranked candidate not already held.
-        free_slots = cfg.max_active_positions - state.active_slot_count()
+        # Must match evaluate_buy's own effective-cap check (base cap + any
+        # bonus slots earned from last week's profit surplus), or a bonus
+        # week would be silently under-filled here even though evaluate_buy
+        # itself would have approved the extra buy.
+        effective_max_active_positions = cfg.max_active_positions + bonus_active_slots(
+            state.prior_week_realized_pnl, cfg
+        )
+        free_slots = effective_max_active_positions - state.active_slot_count()
         if free_slots > 0:
             held = {p.symbol for p in state.active_positions + state.long_hold_positions}
             ranked = rank_candidates_as_of(candidate_symbols, store, today, vol_window_days, atr_window_days)
