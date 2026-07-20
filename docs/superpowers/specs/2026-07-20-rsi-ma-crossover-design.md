@@ -153,11 +153,23 @@ reading to judge an exit, not the entry-day reading.
 
 `robinhood-trading/SKILL.md` Step 7 gets the two new mechanical rejection
 reasons documented (mirroring the sector-concentration bullet already
-there). Step 6 gets new discretionary-exit guidance: "consider an early
-SELL if a held position's RSI is deep in overbought territory or its
-short-term trend has turned bearish," alongside the existing "moved
-sharply against you" guidance — same discretionary bucket, not a new
-mechanical trigger.
+there). Step 6's discretionary-exit guidance splits by lifecycle status,
+since a bullish/bearish reading means something different depending on
+whether a position is still active or already parked in long-hold:
+
+- **ACTIVE/WAITING positions:** consider an early SELL if RSI is deep in
+  overbought territory or the short-term trend has turned bearish —
+  alongside the existing "moved sharply against you" guidance. Same
+  discretionary bucket, not a new mechanical trigger.
+- **LONG_HOLD positions:** a bullish MA-trend reading (short SMA back
+  above the long SMA) is a specific signal to consider **selling into
+  the bounce** rather than holding out for a full recovery — a long-hold
+  position has no guaranteed further upside, so a confirmed short-term
+  uptrend is often the best exit opportunity available, not a reason to
+  wait for more. This is the main new discretionary trigger for
+  long-hold positions, which previously only had the weekly profit-goal
+  sweep (gain-only) or general "moved against you" guidance (which
+  doesn't really apply to something already deep underwater) to go on.
 
 ## Testing Strategy
 
