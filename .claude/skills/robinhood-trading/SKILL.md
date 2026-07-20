@@ -44,7 +44,10 @@ python -m robinhood_bot.cli universe
 ```
 
 This uses a weekly-cached membership list by default (fast). Only pass
-`--refresh` if explicitly asked to force a refresh.
+`--refresh` if explicitly asked to force a refresh. Each candidate's
+`sector` field (its GICS sector, or `null` for the three leveraged funds)
+is needed later in Step 7 when gating a BUY — no separate lookup is
+required.
 
 ## Step 3 — Build today's research shortlist
 
@@ -111,13 +114,17 @@ run immediately before that specific buy executes, reflecting any buys
 already executed earlier in this same cycle.
 
 ```
-python -m robinhood_bot.cli risk-check buy SYMBOL --value <proposed dollar amount> --prices-json "<fresh quotes>"
+python -m robinhood_bot.cli risk-check buy SYMBOL --value <proposed dollar amount> --sector <symbol's sector from Step 2/Step 3 candidate data> --prices-json "<fresh quotes>"
 python -m robinhood_bot.cli risk-check sell SYMBOL --prices-json "<fresh quotes>"
 ```
 
 - If `"approved": false`, **do not execute this trade.** Read `"reason"`
   and either propose a smaller size / different symbol, or fall back to
   HOLD. Never override a rejection.
+- A BUY is rejected if you already hold an active position in the same
+  `--sector` (default limit: 1 position per sector) — the rejection
+  `"reason"` names the sector; treat it exactly like any other
+  rejection, never override it.
 - For an approved BUY, `"max_position_value"` is the ceiling. Compute a
   whole-share quantity: `floor(min(proposed_value, max_position_value) /
   fresh_quote_price)`. You may propose fewer shares than the ceiling
@@ -128,7 +135,7 @@ python -m robinhood_bot.cli risk-check sell SYMBOL --prices-json "<fresh quotes>
 **If `trading_mode` is `"paper"`:**
 
 ```
-python -m robinhood_bot.cli record-fill buy SYMBOL --qty <n> --price <fresh quote price> --reason "<why>"
+python -m robinhood_bot.cli record-fill buy SYMBOL --qty <n> --price <fresh quote price> --sector <same sector passed to Step 7's risk-check> --reason "<why>"
 python -m robinhood_bot.cli record-fill sell SYMBOL --qty <held qty> --price <fresh quote price> --reason "<why>"
 ```
 
@@ -143,7 +150,7 @@ Never call the live order-placement MCP tool in this mode.
    pre-trade quote, even if they're close.
 
 ```
-python -m robinhood_bot.cli record-fill buy SYMBOL --qty <actual filled qty> --price <actual fill price> --reason "<why>"
+python -m robinhood_bot.cli record-fill buy SYMBOL --qty <actual filled qty> --price <actual fill price> --sector <same sector passed to Step 7's risk-check> --reason "<why>"
 ```
 
 If order placement fails: do not call `record-fill`. Leave the ledger
@@ -211,10 +218,11 @@ equivalents, all parameterized by `--run RUN_ID --asof <simulated date>`:
   like every other proposed trade.
 - **Steps 7-8 (gate and execute):** `python -m robinhood_bot.cli backtest
   risk-check {buy|sell} SYMBOL --run RUN_ID --asof <simulated date>
-  --value <proposed dollar amount, for buys> --prices-json "<quotes>"`,
-  then on approval, `python -m robinhood_bot.cli
-  backtest record-fill {buy|sell} SYMBOL --run RUN_ID --asof <simulated
-  date> --qty <n> --price <quote price> --reason "<why>"`. There is no
+  --value <proposed dollar amount, for buys> --sector <symbol's sector,
+  for buys> --prices-json "<quotes>"`, then on approval, `python -m
+  robinhood_bot.cli backtest record-fill {buy|sell} SYMBOL --run RUN_ID
+  --asof <simulated date> --qty <n> --price <quote price> --sector
+  <same sector, for buys> --reason "<why>"`. There is no
   live-order-placement call in this mode, ever.
 - **After all of today's decisions are executed:** `python -m
   robinhood_bot.cli backtest mark-day --run RUN_ID --asof <simulated
