@@ -133,6 +133,7 @@ def cmd_record_fill(
                 "(partial sells are not supported)"
             )
         state.cash += position.qty * price
+        state.week_realized_pnl += (price - position.entry_price) * position.qty
         if position in state.active_positions:
             state.active_positions.remove(position)
         else:
