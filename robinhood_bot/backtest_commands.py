@@ -46,19 +46,19 @@ def cmd_backtest_quote(symbol: str, asof: date, store: HistoricalPriceStore) -> 
 
 def cmd_backtest_risk_check(
     run_id: str, base_dir: Path, starting_cash: float, action: str, symbol: str,
-    proposed_value: float, prices: dict[str, float], cfg: RiskConfig,
+    proposed_value: float, prices: dict[str, float], cfg: RiskConfig, sector: str | None = None,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
-    return commands.cmd_risk_check(paths.ledger, starting_cash, action, symbol, proposed_value, prices, cfg)
+    return commands.cmd_risk_check(paths.ledger, starting_cash, action, symbol, proposed_value, prices, cfg, sector)
 
 
 def cmd_backtest_record_fill(
     run_id: str, base_dir: Path, starting_cash: float, action: str, symbol: str,
-    qty: float, price: float, asof: date, reason: str,
+    qty: float, price: float, asof: date, reason: str, sector: str | None = None,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
     return commands.cmd_record_fill(
-        paths.ledger, paths.trade_log, starting_cash, action, symbol, qty, price, asof, reason,
+        paths.ledger, paths.trade_log, starting_cash, action, symbol, qty, price, asof, reason, sector,
     )
 
 
@@ -145,6 +145,7 @@ def cmd_backtest_run(
     start: date,
     end: date,
     candidate_symbols: list[str],
+    candidate_sectors: dict[str, str],
     store: HistoricalPriceStore,
     cfg: RiskConfig,
     benchmark_symbol: str = "SPY",
@@ -234,7 +235,8 @@ def cmd_backtest_run(
                 total_equity = cash + positions_value
                 max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
                 proposed_value = min(max_value, state.cash)
-                decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg)
+                sector = candidate_sectors.get(symbol)
+                decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector)
                 if not decision.approved:
                     continue
                 qty = math.floor(proposed_value / price)
@@ -243,7 +245,7 @@ def cmd_backtest_run(
 
                 commands.cmd_record_fill(
                     paths.ledger, paths.trade_log, starting_cash, "buy", symbol, qty, price, today,
-                    "backtest entry",
+                    "backtest entry", sector,
                 )
                 state = ledger.load_state(paths.ledger, starting_cash)
                 held.add(symbol)

@@ -240,7 +240,7 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
 
     result = backtest_commands.cmd_backtest_run(
         "run1", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 1), end=date(2026, 1, 5),
-        candidate_symbols=["A"], store=store, cfg=cfg,
+        candidate_symbols=["A"], candidate_sectors={}, store=store, cfg=cfg,
     )
 
     assert result["trading_days"] == 2
@@ -301,7 +301,7 @@ def test_cmd_backtest_run_escalates_tier_across_days_in_same_week(tmp_path):
 
     backtest_commands.cmd_backtest_run(
         "run_escalation", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 1), end=date(2026, 1, 6),
-        candidate_symbols=["A"], store=store, cfg=cfg,
+        candidate_symbols=["A"], candidate_sectors={}, store=store, cfg=cfg,
     )
 
     paths = backtest_commands.resolve_run_paths("run_escalation", tmp_path)
@@ -367,7 +367,7 @@ def test_cmd_backtest_run_promotes_expired_underwater_position_to_long_hold(tmp_
 
     backtest_commands.cmd_backtest_run(
         "run1", tmp_path, starting_cash=9_000.0, start=date(2026, 1, 2), end=date(2026, 1, 2),
-        candidate_symbols=["B"], store=store, cfg=cfg, vol_window_days=2, atr_window_days=2,
+        candidate_symbols=["B"], candidate_sectors={}, store=store, cfg=cfg, vol_window_days=2, atr_window_days=2,
     )
 
     paths = backtest_commands.resolve_run_paths("run1", tmp_path)
@@ -403,7 +403,7 @@ def test_cmd_backtest_run_sweeps_recovered_long_hold_position_for_profit(tmp_pat
 
     backtest_commands.cmd_backtest_run(
         "run2", tmp_path, starting_cash=1_000.0, start=date(2026, 1, 2), end=date(2026, 1, 2),
-        candidate_symbols=[], store=store, cfg=cfg,
+        candidate_symbols=[], candidate_sectors={}, store=store, cfg=cfg,
     )
 
     final_state = ledger.load_state(paths.ledger, starting_cash=1_000.0)
@@ -417,6 +417,70 @@ def test_cmd_backtest_run_sweeps_recovered_long_hold_position_for_profit(tmp_pat
     assert rows[0]["action"] == "SELL"
     assert rows[0]["symbol"] == "A"
     assert rows[0]["reason"] == "weekly profit-goal exit"
+
+
+def test_cmd_backtest_run_skips_same_sector_candidate_for_next_ranked(tmp_path):
+    # MSFT is already held (sector "Technology"), one free active slot. Of the
+    # two candidates, AAPL2 ranks first (far higher volatility/ATR from its
+    # wild swings below) but shares MSFT's sector, so it must be REJECTED by
+    # the sector-concentration check; JPM ranks second but has a different
+    # sector, so it's the one that should actually get bought. If the sector
+    # check weren't wired into this loop, AAPL2 (the top-ranked candidate)
+    # would be bought instead.
+    bars = {
+        "SPY": [HistoricalBar(date(2026, 1, 2), 400.0, 401.0, 399.0, 400.0)],
+        "AAPL2": [
+            HistoricalBar(date(2025, 12, 30), 90.0, 110.0, 80.0, 100.0),
+            HistoricalBar(date(2025, 12, 31), 100.0, 130.0, 70.0, 90.0),
+            HistoricalBar(date(2026, 1, 2), 90.0, 120.0, 60.0, 110.0),
+        ],
+        "JPM": [
+            HistoricalBar(date(2025, 12, 30), 149.0, 150.5, 148.5, 150.0),
+            HistoricalBar(date(2025, 12, 31), 150.0, 151.0, 149.5, 150.2),
+            HistoricalBar(date(2026, 1, 2), 150.2, 151.2, 149.8, 150.4),
+        ],
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            # MSFT (the already-held position) is intentionally NOT a key in
+            # `bars` -- it isn't a candidate this run needs price history
+            # for beyond the exits/equity phases, which already tolerate a
+            # missing quote by falling back to entry_price. Use `.get` (not
+            # `bars[symbol]`) so that fallback path doesn't KeyError instead.
+            return [b for b in bars.get(symbol, []) if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=2, stop_loss_pct=0.5, weekly_profit_goal=100_000.0,
+        max_position_pct=1.0, min_position_pct=1.0, grace_period_days=5,
+        max_positions_per_sector=1,
+    )
+
+    paths = backtest_commands.resolve_run_paths("run_sector", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=10_000.0,
+        active_positions=[Position("MSFT", 5, 300.0, date(2025, 12, 1), PositionStatus.ACTIVE, sector="Technology")],
+        month="2026-01",
+        month_start_equity=11_500.0,
+    ))
+
+    backtest_commands.cmd_backtest_run(
+        "run_sector", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 2), end=date(2026, 1, 2),
+        candidate_symbols=["AAPL2", "JPM"], candidate_sectors={"AAPL2": "Technology", "JPM": "Financials"},
+        store=store, cfg=cfg, vol_window_days=2, atr_window_days=2,
+    )
+
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+    symbols = {p.symbol for p in final_state.active_positions}
+    assert symbols == {"MSFT", "JPM"}
+    jpm = next(p for p in final_state.active_positions if p.symbol == "JPM")
+    assert jpm.sector == "Financials"
+    assert jpm.qty == 66
+
+    with paths.trade_log.open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["symbol"] for r in rows] == ["JPM"]
 
 
 def test_cmd_backtest_report_computes_return_and_benchmark(tmp_path):
