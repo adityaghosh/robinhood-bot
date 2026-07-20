@@ -51,6 +51,9 @@ around it.
 - Scheduled/automated invocation of either backtest mode.
 - Options/crypto/futures backtesting — equities only, matching the
   live bot's current scope.
+- Same-day re-entry into a symbol that was just sold (if it's still
+  top-ranked) is possible and not specially prevented — the
+  deterministic rule has no cooldown period.
 
 ## Architecture
 
