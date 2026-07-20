@@ -77,3 +77,18 @@ def test_roll_week_if_needed_handles_iso_year_boundary():
     roll_week_if_needed(state, today=date(2025, 12, 29))
     assert state.week == "2026-W01"
     assert state.week_realized_pnl == 0.0
+
+
+def test_roll_week_if_needed_captures_prior_week_realized_pnl_on_rollover():
+    state = PortfolioState(cash=10_000.0, week="2026-W01", week_realized_pnl=700.0)
+    roll_week_if_needed(state, today=date(2026, 1, 12))
+    assert state.prior_week_realized_pnl == 700.0
+    assert state.week_realized_pnl == 0.0
+
+
+def test_roll_week_if_needed_leaves_prior_week_realized_pnl_untouched_within_same_week():
+    state = PortfolioState(
+        cash=10_000.0, week="2026-W03", week_realized_pnl=250.0, prior_week_realized_pnl=700.0,
+    )
+    roll_week_if_needed(state, today=date(2026, 1, 15))
+    assert state.prior_week_realized_pnl == 700.0

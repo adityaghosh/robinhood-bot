@@ -45,6 +45,7 @@ def state_to_dict(state: PortfolioState) -> dict:
         "month_start_equity": state.month_start_equity,
         "week": state.week,
         "week_realized_pnl": state.week_realized_pnl,
+        "prior_week_realized_pnl": state.prior_week_realized_pnl,
     }
 
 
@@ -57,6 +58,7 @@ def state_from_dict(data: dict) -> PortfolioState:
         month_start_equity=data.get("month_start_equity", 0.0),
         week=data.get("week", ""),
         week_realized_pnl=data.get("week_realized_pnl", 0.0),
+        prior_week_realized_pnl=data.get("prior_week_realized_pnl", 0.0),
     )
 
 

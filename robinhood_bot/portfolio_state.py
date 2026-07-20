@@ -35,6 +35,7 @@ class PortfolioState:
     month_start_equity: float = 0.0
     week: str = ""
     week_realized_pnl: float = 0.0
+    prior_week_realized_pnl: float = 0.0
 
     def active_slot_count(self) -> int:
         return len(self.active_positions)
@@ -70,6 +71,7 @@ def roll_week_if_needed(state: PortfolioState, today: date) -> PortfolioState:
     iso_year, iso_week, _ = today.isocalendar()
     current_week = f"{iso_year:04d}-W{iso_week:02d}"
     if state.week != current_week:
+        state.prior_week_realized_pnl = state.week_realized_pnl
         state.week = current_week
         state.week_realized_pnl = 0.0
     return state
