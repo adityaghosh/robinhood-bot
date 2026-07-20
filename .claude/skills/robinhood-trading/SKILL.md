@@ -196,6 +196,15 @@ equivalents, all parameterized by `--run RUN_ID --asof <simulated date>`:
   backtest record-fill {buy|sell} SYMBOL --run RUN_ID --asof <simulated
   date> --qty <n> --price <quote price> --reason "<why>"`. There is no
   live-order-placement call in this mode, ever.
+- **After all of today's decisions are executed:** `python -m
+  robinhood_bot.cli backtest mark-day --run RUN_ID --asof <simulated
+  date> --prices-json "<quotes from Step 4>"`. This records today's
+  mark-to-market equity (cash + all held positions, valued at today's
+  quotes) so `backtest report` has a full day-by-day equity curve to
+  compute `max_drawdown_pct` from at the end — `backtest run`'s
+  deterministic loop writes this same row internally every day, but this
+  manual mode has no equivalent automatic step, so it must be called
+  explicitly, once per simulated day.
 
 ### Summarize
 

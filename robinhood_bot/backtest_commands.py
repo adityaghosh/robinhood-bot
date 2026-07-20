@@ -66,6 +66,25 @@ def cmd_backtest_check_stop_losses(
     return commands.cmd_check_stop_losses(paths.ledger, starting_cash, prices, asof, cfg, apply)
 
 
+def cmd_backtest_mark_day(
+    run_id: str, base_dir: Path, starting_cash: float, prices: dict[str, float], asof: date,
+) -> dict:
+    paths = resolve_run_paths(run_id, base_dir)
+    state = ledger.load_state(paths.ledger, starting_cash)
+    positions_value = sum(
+        prices.get(p.symbol, p.entry_price) * p.qty
+        for p in state.active_positions + state.long_hold_positions
+    )
+    row = {
+        "date": asof.isoformat(),
+        "cash": state.cash,
+        "positions_value": positions_value,
+        "total_equity": state.cash + positions_value,
+    }
+    _append_equity_curve(paths.equity_curve, row)
+    return row
+
+
 def cmd_backtest_trading_days(
     start: date, end: date, store: HistoricalPriceStore, benchmark_symbol: str = "SPY",
 ) -> dict:

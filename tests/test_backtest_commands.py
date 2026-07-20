@@ -97,6 +97,56 @@ def test_cmd_backtest_check_stop_losses_uses_isolated_ledger(tmp_path):
     assert result["results"][0]["action"] == "SELL"
 
 
+def test_cmd_backtest_mark_day_appends_equity_curve_row(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=1_000.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 1, 1), PositionStatus.ACTIVE)],
+    ))
+
+    row = backtest_commands.cmd_backtest_mark_day(
+        "run1", tmp_path, starting_cash=0.0, prices={"AAPL": 110.0}, asof=date(2026, 1, 5),
+    )
+
+    assert row == {
+        "date": "2026-01-05", "cash": 1_000.0, "positions_value": 1_100.0, "total_equity": 2_100.0,
+    }
+    with paths.equity_curve.open() as f:
+        rows = list(csv.DictReader(f))
+    assert rows == [{"date": "2026-01-05", "cash": "1000.0", "positions_value": "1100.0", "total_equity": "2100.0"}]
+
+
+def test_cmd_backtest_mark_day_falls_back_to_entry_price_when_quote_missing(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=500.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 1, 1), PositionStatus.ACTIVE)],
+    ))
+
+    row = backtest_commands.cmd_backtest_mark_day(
+        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5),
+    )
+
+    assert row["positions_value"] == 1_000.0
+    assert row["total_equity"] == 1_500.0
+
+
+def test_cmd_backtest_mark_day_appends_one_row_per_call(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(cash=1_000.0))
+
+    backtest_commands.cmd_backtest_mark_day(
+        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5),
+    )
+    backtest_commands.cmd_backtest_mark_day(
+        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 6),
+    )
+
+    with paths.equity_curve.open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["date"] for r in rows] == ["2026-01-05", "2026-01-06"]
+
+
 def test_cmd_backtest_trading_days_returns_isoformat_dates(tmp_path):
     class FakeFetcher:
         def fetch_history(self, symbol, start, end):

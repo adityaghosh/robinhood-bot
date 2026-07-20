@@ -60,6 +60,11 @@ def _dispatch_backtest(args) -> dict:
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, _parse_prices(args.prices_json),
             date.fromisoformat(args.asof), cfg, args.apply,
         )
+    if args.backtest_command == "mark-day":
+        return backtest_commands.cmd_backtest_mark_day(
+            args.run, BACKTEST_BASE_DIR, STARTING_CASH, _parse_prices(args.prices_json),
+            date.fromisoformat(args.asof),
+        )
     if args.backtest_command == "trading-days":
         return backtest_commands.cmd_backtest_trading_days(
             date.fromisoformat(args.start), date.fromisoformat(args.end), _build_price_store(),
@@ -144,6 +149,11 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_stop.add_argument("--asof", required=True)
     p_bt_stop.add_argument("--prices-json", required=True)
     p_bt_stop.add_argument("--apply", action="store_true")
+
+    p_bt_mark = backtest_sub.add_parser("mark-day")
+    p_bt_mark.add_argument("--run", required=True)
+    p_bt_mark.add_argument("--asof", required=True)
+    p_bt_mark.add_argument("--prices-json", default=None)
 
     p_bt_run = backtest_sub.add_parser("run")
     p_bt_run.add_argument("--run", required=True)

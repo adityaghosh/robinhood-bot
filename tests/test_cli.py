@@ -107,6 +107,22 @@ def test_cli_backtest_record_fill_command_writes_isolated_ledger(tmp_path, monke
     assert (tmp_path / "run1" / "ledger.json").exists()
 
 
+def test_cli_backtest_mark_day_command_appends_equity_curve_row(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "BACKTEST_BASE_DIR", tmp_path)
+
+    exit_code = cli.main([
+        "backtest", "mark-day", "--run", "run1", "--asof", "2026-01-05", "--prices-json", "{}",
+    ])
+
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "date": "2026-01-05", "cash": cli.STARTING_CASH, "positions_value": 0.0,
+        "total_equity": cli.STARTING_CASH,
+    }
+    assert (tmp_path / "run1" / "equity_curve.csv").exists()
+
+
 def test_cli_backtest_run_command_delegates_to_backtest_commands(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "HISTORICAL_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(cli, "BACKTEST_BASE_DIR", tmp_path / "backtests")
