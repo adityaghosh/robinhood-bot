@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from enum import Enum
 
 
@@ -71,7 +71,11 @@ def roll_week_if_needed(state: PortfolioState, today: date) -> PortfolioState:
     iso_year, iso_week, _ = today.isocalendar()
     current_week = f"{iso_year:04d}-W{iso_week:02d}"
     if state.week != current_week:
-        state.prior_week_realized_pnl = state.week_realized_pnl
+        prior_year, prior_week, _ = (today - timedelta(weeks=1)).isocalendar()
+        immediately_preceding_week = f"{prior_year:04d}-W{prior_week:02d}"
+        state.prior_week_realized_pnl = (
+            state.week_realized_pnl if state.week == immediately_preceding_week else 0.0
+        )
         state.week = current_week
         state.week_realized_pnl = 0.0
     return state
