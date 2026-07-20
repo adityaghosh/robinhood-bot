@@ -48,7 +48,7 @@ def evaluate_position(
 
 
 def current_weekly_tier(week_realized_pnl: float, cfg: RiskConfig) -> float:
-    return (int(week_realized_pnl // cfg.weekly_profit_goal) + 1) * cfg.weekly_profit_goal
+    return max(0.0, (int(week_realized_pnl // cfg.weekly_profit_goal) + 1) * cfg.weekly_profit_goal)
 
 
 def evaluate_profit_exits(

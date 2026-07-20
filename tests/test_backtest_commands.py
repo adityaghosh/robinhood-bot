@@ -274,6 +274,60 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     assert float(equity_rows[1]["total_equity"]) == pytest.approx(10_400.0)
 
 
+def test_cmd_backtest_run_escalates_tier_across_days_in_same_week(tmp_path):
+    bars = {
+        "A": [
+            HistoricalBar(date(2025, 12, 31), 98.0, 99.5, 97.5, 99.0),
+            HistoricalBar(date(2026, 1, 2), 99.0, 100.5, 98.5, 100.0),
+            HistoricalBar(date(2026, 1, 5), 106.0, 109.0, 105.0, 108.0),
+            HistoricalBar(date(2026, 1, 6), 109.0, 111.0, 107.0, 110.0),
+        ],
+        "SPY": [
+            HistoricalBar(date(2026, 1, 2), 400.0, 401.0, 399.0, 400.0),
+            HistoricalBar(date(2026, 1, 5), 402.0, 404.0, 401.0, 403.0),
+            HistoricalBar(date(2026, 1, 6), 403.0, 405.0, 402.0, 404.0),
+        ],
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars[symbol] if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, stop_loss_pct=0.05, weekly_profit_goal=200.0,
+        max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
+    )
+
+    backtest_commands.cmd_backtest_run(
+        "run_escalation", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 1), end=date(2026, 1, 6),
+        candidate_symbols=["A"], store=store, cfg=cfg,
+    )
+
+    paths = backtest_commands.resolve_run_paths("run_escalation", tmp_path)
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+
+    # Day 1: buy 50 A @ $100 (cash 5000). Day 2 (new ISO week, week_realized_pnl
+    # resets to 0): A's $400 gain clears the $200 tier -> sold, week_realized_pnl=400;
+    # rebuy 48 @ $108 (cash 5216). Day 3 (same week as day 2, no reset): tier has
+    # escalated to 600 (the next $200 multiple above 400) -- if escalation were
+    # broken and the tier stayed frozen at $200, `running=400 >= tier=200` would
+    # break the loop immediately and A would NEVER be sold this day, since day 3's
+    # gain (400-108... i.e. (110-108)*48=96) doesn't matter in that broken case.
+    # With correct escalation, running(400) < tier(600), so A DOES get sold despite
+    # its modest $96 gain, proving the tier genuinely moved from 200 to 600, not
+    # just "some sell happened."
+    assert final_state.week_realized_pnl == pytest.approx(496.0)
+    assert final_state.active_positions[0].symbol == "A"
+    assert final_state.active_positions[0].qty == 47
+    assert final_state.active_positions[0].entry_price == 110.0
+    assert final_state.cash == pytest.approx(5_326.0)
+
+    with paths.trade_log.open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["action"] for r in rows] == ["BUY", "SELL", "BUY", "SELL", "BUY"]
+
+
 def test_cmd_backtest_run_promotes_expired_underwater_position_to_long_hold(tmp_path):
     # A has been underwater (price 80 vs entry 100, well past stop_loss_pct)
     # since 2025-12-20, already flagged WAITING by a prior day's evaluation.

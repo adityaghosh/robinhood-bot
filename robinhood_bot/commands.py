@@ -114,6 +114,7 @@ def cmd_record_fill(
     reason: str,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
+    roll_week_if_needed(state, today)
 
     if action == "buy":
         if state.is_held(symbol):

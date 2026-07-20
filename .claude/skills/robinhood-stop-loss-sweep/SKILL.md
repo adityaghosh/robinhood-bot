@@ -1,6 +1,6 @@
 ---
 name: robinhood-stop-loss-sweep
-description: Mechanical intraday safety-net sweep for the Robinhood trading bot — checks open positions against hard stop-loss/profit-target thresholds and exits any that breach them. No research, no discretion. Invoke at a fixed point mid-trading-day, between daily-cycle runs.
+description: Mechanical intraday safety-net sweep for the Robinhood trading bot — checks open positions against the stop-loss/grace-period rule and the weekly profit-goal tiers, and exits any that breach or clear them. No research, no discretion. Invoke at a fixed point mid-trading-day, between daily-cycle runs.
 ---
 
 # Stop-Loss Sweep

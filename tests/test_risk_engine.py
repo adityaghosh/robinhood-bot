@@ -205,6 +205,11 @@ def test_current_weekly_tier_handles_negative_realized_pnl():
     assert current_weekly_tier(-200.0, cfg) == 0.0
 
 
+def test_current_weekly_tier_clamps_deep_negative_realized_pnl_to_zero():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(-600.0, cfg) == 0.0
+
+
 def test_evaluate_profit_exits_sells_single_winner_reaching_tier():
     cfg = RiskConfig(weekly_profit_goal=500.0)
     position = _position(symbol="AAPL", qty=10, entry_price=100.0)

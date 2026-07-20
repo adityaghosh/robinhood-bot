@@ -305,7 +305,7 @@ def test_cmd_record_fill_sell_accumulates_week_realized_pnl(tmp_path):
     ledger.save_state(ledger_path, PortfolioState(
         cash=1_000.0,
         active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
-        week="2026-W27", week_realized_pnl=50.0,
+        week="2026-W28", week_realized_pnl=50.0,
     ))
 
     commands.cmd_record_fill(
@@ -323,7 +323,7 @@ def test_cmd_record_fill_sell_at_a_loss_decreases_week_realized_pnl(tmp_path):
     ledger.save_state(ledger_path, PortfolioState(
         cash=1_000.0,
         active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
-        week="2026-W27", week_realized_pnl=200.0,
+        week="2026-W28", week_realized_pnl=200.0,
     ))
 
     commands.cmd_record_fill(
@@ -332,6 +332,25 @@ def test_cmd_record_fill_sell_at_a_loss_decreases_week_realized_pnl(tmp_path):
     )
 
     reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.week_realized_pnl == pytest.approx(100.0)
+
+
+def test_cmd_record_fill_rolls_week_before_accumulating(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    trade_log_path = tmp_path / "trade_log.csv"
+    ledger.save_state(ledger_path, PortfolioState(
+        cash=1_000.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
+        week="2026-W27", week_realized_pnl=999.0,
+    ))
+
+    commands.cmd_record_fill(
+        ledger_path, trade_log_path, starting_cash=0.0, action="sell", symbol="AAPL",
+        qty=10, price=110.0, today=date(2026, 7, 10), reason="test",
+    )
+
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.week == "2026-W28"
     assert reloaded.week_realized_pnl == pytest.approx(100.0)
 
 
