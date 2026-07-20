@@ -79,6 +79,7 @@ def cmd_risk_check(
     proposed_value: float,
     prices: dict[str, float],
     cfg: RiskConfig,
+    sector: str | None = None,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
 
@@ -89,7 +90,7 @@ def cmd_risk_check(
     total_equity = state.cash + positions_value
 
     if action == "buy":
-        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg)
+        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector)
         return {
             "approved": decision.approved,
             "reason": decision.reason,
@@ -112,6 +113,7 @@ def cmd_record_fill(
     price: float,
     today: date,
     reason: str,
+    sector: str | None = None,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
     roll_week_if_needed(state, today)
@@ -130,6 +132,7 @@ def cmd_record_fill(
                 entry_price=price,
                 entry_date=today,
                 status=PositionStatus.ACTIVE,
+                sector=sector,
             )
         )
     elif action == "sell":
