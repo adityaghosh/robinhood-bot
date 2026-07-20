@@ -31,9 +31,10 @@ def resolve_run_paths(run_id: str, base_dir: Path) -> RunPaths:
 
 def cmd_backtest_state(
     run_id: str, base_dir: Path, starting_cash: float, prices: dict[str, float], asof: date,
+    cfg: RiskConfig,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
-    return commands.cmd_state(paths.ledger, starting_cash, prices, asof, trading_mode="backtest")
+    return commands.cmd_state(paths.ledger, starting_cash, prices, asof, trading_mode="backtest", cfg=cfg)
 
 
 def cmd_backtest_quote(symbol: str, asof: date, store: HistoricalPriceStore) -> dict:

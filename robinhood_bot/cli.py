@@ -39,7 +39,7 @@ def _dispatch_backtest(args) -> dict:
     if args.backtest_command == "state":
         return backtest_commands.cmd_backtest_state(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, _parse_prices(args.prices_json),
-            date.fromisoformat(args.asof),
+            date.fromisoformat(args.asof), cfg,
         )
     if args.backtest_command == "quote":
         return backtest_commands.cmd_backtest_quote(
@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "state":
         result = commands.cmd_state(
-            LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE
+            LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE, cfg
         )
     elif args.command == "risk-check":
         result = commands.cmd_risk_check(

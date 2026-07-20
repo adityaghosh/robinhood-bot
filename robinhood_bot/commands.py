@@ -4,8 +4,8 @@ from datetime import date
 from pathlib import Path
 
 from . import ledger
-from .portfolio_state import Position, PositionStatus, roll_month_if_needed
-from .risk_engine import RiskConfig, ExitAction, evaluate_buy, evaluate_position, evaluate_sell
+from .portfolio_state import Position, PositionStatus, roll_month_if_needed, roll_week_if_needed
+from .risk_engine import RiskConfig, ExitAction, current_weekly_tier, evaluate_buy, evaluate_position, evaluate_sell
 
 
 def _position_value(position, prices: dict[str, float]) -> tuple[float, bool]:
@@ -36,6 +36,7 @@ def cmd_state(
     prices: dict[str, float],
     today: date,
     trading_mode: str,
+    cfg: RiskConfig,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
 
@@ -45,6 +46,7 @@ def cmd_state(
     total_equity = state.cash + positions_value
 
     roll_month_if_needed(state, today, total_equity)
+    roll_week_if_needed(state, today)
     ledger.save_state(ledger_path, state)
 
     return {
@@ -60,6 +62,9 @@ def cmd_state(
             if state.month_start_equity > 0
             else 0.0
         ),
+        "week": state.week,
+        "week_realized_pnl": state.week_realized_pnl,
+        "week_profit_target": current_weekly_tier(state.week_realized_pnl, cfg),
     }
 
 

@@ -19,7 +19,7 @@ def test_cmd_state_computes_total_equity_and_pnl(tmp_path):
 
     result = commands.cmd_state(
         ledger_path, starting_cash=0.0, prices={"AAPL": 110.0}, today=date(2026, 7, 10),
-        trading_mode="paper",
+        trading_mode="paper", cfg=RiskConfig(),
     )
 
     assert result["cash"] == 5_000.0
@@ -38,6 +38,7 @@ def test_cmd_state_marks_missing_price_as_stale(tmp_path):
 
     result = commands.cmd_state(
         ledger_path, starting_cash=0.0, prices={}, today=date(2026, 7, 10), trading_mode="paper",
+        cfg=RiskConfig(),
     )
 
     assert result["active_positions"][0]["stale_price"] is True
@@ -52,6 +53,7 @@ def test_cmd_state_rolls_month_and_persists(tmp_path):
 
     result = commands.cmd_state(
         ledger_path, starting_cash=0.0, prices={}, today=date(2026, 7, 1), trading_mode="paper",
+        cfg=RiskConfig(),
     )
 
     assert result["month"] == "2026-07"
@@ -67,6 +69,7 @@ def test_cmd_state_includes_trading_mode(tmp_path):
 
     result = commands.cmd_state(
         ledger_path, starting_cash=0.0, prices={}, today=date(2026, 7, 10), trading_mode="live",
+        cfg=RiskConfig(),
     )
 
     assert result["trading_mode"] == "live"
@@ -309,3 +312,33 @@ def test_cmd_record_fill_sell_at_a_loss_decreases_week_realized_pnl(tmp_path):
 
     reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
     assert reloaded.week_realized_pnl == pytest.approx(100.0)
+
+
+def test_cmd_state_includes_week_tracking_fields(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(cash=10_000.0, week="2026-W28", week_realized_pnl=250.0))
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+
+    result = commands.cmd_state(
+        ledger_path, starting_cash=0.0, prices={}, today=date(2026, 7, 10), trading_mode="paper", cfg=cfg,
+    )
+
+    assert result["week"] == "2026-W28"
+    assert result["week_realized_pnl"] == 250.0
+    assert result["week_profit_target"] == 500.0
+
+
+def test_cmd_state_rolls_week_and_persists(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(cash=10_000.0, week="2026-W27", week_realized_pnl=250.0))
+    cfg = RiskConfig()
+
+    result = commands.cmd_state(
+        ledger_path, starting_cash=0.0, prices={}, today=date(2026, 7, 10), trading_mode="paper", cfg=cfg,
+    )
+
+    assert result["week"] == "2026-W28"
+    assert result["week_realized_pnl"] == 0.0
+
+    reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
+    assert reloaded.week == "2026-W28"

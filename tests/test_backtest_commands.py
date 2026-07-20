@@ -22,7 +22,7 @@ def test_cmd_backtest_state_reads_isolated_ledger(tmp_path):
     ledger.save_state(paths.ledger, PortfolioState(cash=5_000.0))
 
     result = backtest_commands.cmd_backtest_state(
-        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5),
+        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5), cfg=RiskConfig(),
     )
 
     assert result["cash"] == 5_000.0
