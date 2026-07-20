@@ -222,21 +222,42 @@ def test_check_stop_losses_skips_symbol_without_fresh_price(tmp_path):
     assert reloaded.active_positions[0].status == PositionStatus.ACTIVE
 
 
-def test_check_stop_losses_reports_sell_without_removing_position(tmp_path):
+def test_check_stop_losses_reports_profit_exit_without_removing_position(tmp_path):
     ledger_path = tmp_path / "ledger.json"
     ledger.save_state(ledger_path, PortfolioState(
         cash=0.0,
         active_positions=[Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)],
     ))
-    cfg = RiskConfig(profit_target_pct=0.08)
+    cfg = RiskConfig(weekly_profit_goal=500.0)
 
     result = commands.cmd_check_stop_losses(
-        ledger_path, starting_cash=0.0, prices={"AAPL": 110.0}, today=date(2026, 7, 10), cfg=cfg, apply=True,
+        ledger_path, starting_cash=0.0, prices={"AAPL": 160.0}, today=date(2026, 7, 10), cfg=cfg, apply=True,
     )
 
-    assert result["results"][0]["action"] == "SELL"
+    sell_results = [r for r in result["results"] if r["action"] == "SELL"]
+    assert sell_results == [
+        {"symbol": "AAPL", "action": "SELL", "current_status": "ACTIVE", "new_status": "ACTIVE"}
+    ]
     reloaded = ledger.load_state(ledger_path, starting_cash=0.0)
     assert reloaded.active_positions[0].symbol == "AAPL"
+
+
+def test_check_stop_losses_reports_profit_exit_for_recovered_long_hold_position(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(
+        cash=0.0,
+        long_hold_positions=[Position("TSLA", 5, 200.0, date(2026, 6, 1), PositionStatus.LONG_HOLD)],
+    ))
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+
+    result = commands.cmd_check_stop_losses(
+        ledger_path, starting_cash=0.0, prices={"TSLA": 320.0}, today=date(2026, 7, 10), cfg=cfg, apply=True,
+    )
+
+    sell_results = [r for r in result["results"] if r["action"] == "SELL"]
+    assert sell_results == [
+        {"symbol": "TSLA", "action": "SELL", "current_status": "LONG_HOLD", "new_status": "LONG_HOLD"}
+    ]
 
 
 def test_check_stop_losses_promotes_expired_position_to_long_hold(tmp_path):

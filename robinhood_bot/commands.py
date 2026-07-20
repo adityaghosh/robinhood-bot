@@ -5,7 +5,10 @@ from pathlib import Path
 
 from . import ledger
 from .portfolio_state import Position, PositionStatus, roll_month_if_needed, roll_week_if_needed
-from .risk_engine import RiskConfig, ExitAction, current_weekly_tier, evaluate_buy, evaluate_position, evaluate_sell
+from .risk_engine import (
+    RiskConfig, ExitAction, current_weekly_tier, evaluate_buy, evaluate_position,
+    evaluate_profit_exits, evaluate_sell,
+)
 
 
 def _position_value(position, prices: dict[str, float]) -> tuple[float, bool]:
@@ -189,7 +192,7 @@ def cmd_check_stop_losses(
             "new_status": evaluation.new_status.value,
         })
 
-        if not apply or evaluation.action == ExitAction.SELL:
+        if not apply:
             remaining_active.append(position)
             continue
 
@@ -202,6 +205,17 @@ def cmd_check_stop_losses(
             remaining_active.append(position)
 
     state.active_positions = remaining_active
+
+    profit_exits = evaluate_profit_exits(
+        state.active_positions + state.long_hold_positions, prices, state.week_realized_pnl, cfg,
+    )
+    for position in profit_exits:
+        results.append({
+            "symbol": position.symbol,
+            "action": "SELL",
+            "current_status": position.status.value,
+            "new_status": position.status.value,
+        })
 
     if apply:
         ledger.save_state(ledger_path, state)
