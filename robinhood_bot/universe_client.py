@@ -57,6 +57,16 @@ class LiveMarketDataClient:
                 market_caps[ticker] = float(market_cap)
         return market_caps
 
+    def fetch_sector(self, ticker: str) -> str | None:
+        try:
+            # NOTE: sector isn't available on fast_info -- only the full
+            # (slower) .info property exposes GICS sector classification.
+            info = yf.Ticker(ticker).info
+            sector = info.get("sector")
+        except Exception:
+            return None
+        return sector if sector else None
+
     def fetch_daily_bars(self, ticker: str, lookback_days: int) -> list[Bar]:
         try:
             history = yf.Ticker(ticker).history(

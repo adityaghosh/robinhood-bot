@@ -339,6 +339,7 @@ from robinhood_bot.universe import build_universe
 
 def test_build_universe_ranks_by_realized_vol_when_mode_is_realized_vol(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     bars_low = [Bar(101.0, 99.0, 100.0), Bar(101.0, 99.5, 100.2), Bar(100.8, 99.6, 100.1)]
     bars_high = [Bar(110.0, 90.0, 100.0), Bar(115.0, 85.0, 105.0), Bar(120.0, 80.0, 95.0)]
@@ -346,13 +347,14 @@ def test_build_universe_ranks_by_realized_vol_when_mode_is_realized_vol(tmp_path
         sp500=["LOW", "HIGH"], nasdaq100=[],
         market_caps={"LOW": 100.0, "HIGH": 200.0},
         bars={"LOW": bars_low, "HIGH": bars_high},
+        sectors={"LOW": "Technology", "HIGH": "Technology"},
     )
     cfg = UniverseConfig(
         top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[],
         realized_vol_window_days=2, atr_window_days=2, ranking_mode="realized_vol",
     )
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["HIGH", "LOW"]
     assert candidates[0].combined_rank == 1.0
@@ -361,34 +363,39 @@ def test_build_universe_ranks_by_realized_vol_when_mode_is_realized_vol(tmp_path
 
 def test_build_universe_drops_symbols_with_no_bars(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     client = FakeMarketDataClient(
         sp500=["A", "B"], nasdaq100=[],
         market_caps={"A": 100.0, "B": 200.0},
         bars={"A": [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]},
+        sectors={"A": "Technology", "B": "Technology"},
     )
     cfg = UniverseConfig(top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[])
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["A"]
 
 
 def test_build_universe_includes_leveraged_funds(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     bars = [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]
     client = FakeMarketDataClient(sp500=[], nasdaq100=[], market_caps={}, bars={"TQQQ": bars})
     cfg = UniverseConfig(top_n_sp500=0, top_n_nasdaq100=0, leveraged_funds=["TQQQ"])
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["TQQQ"]
     assert candidates[0].category == "leveraged"
+    assert candidates[0].sector is None
 
 
 def test_build_universe_both_mode_averages_percentile_ranks(tmp_path):
     cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
     today = date(2026, 7, 19)
     bars_a = [Bar(101.0, 99.0, 100.0), Bar(101.0, 99.5, 100.2), Bar(100.8, 99.6, 100.1)]
     bars_b = [Bar(110.0, 90.0, 100.0), Bar(115.0, 85.0, 105.0), Bar(120.0, 80.0, 95.0)]
@@ -396,14 +403,51 @@ def test_build_universe_both_mode_averages_percentile_ranks(tmp_path):
         sp500=["A", "B"], nasdaq100=[],
         market_caps={"A": 100.0, "B": 200.0},
         bars={"A": bars_a, "B": bars_b},
+        sectors={"A": "Technology", "B": "Financials"},
     )
     cfg = UniverseConfig(
         top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[],
         realized_vol_window_days=2, atr_window_days=2, ranking_mode="both",
     )
 
-    candidates = build_universe(client, cache_path, cfg, today, force_refresh=False)
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert [c.symbol for c in candidates] == ["B", "A"]
     assert candidates[0].combined_rank == 1.0
     assert candidates[1].combined_rank == 0.0
+
+
+def test_build_universe_drops_candidate_with_unresolvable_sector(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]
+    client = FakeMarketDataClient(
+        sp500=["A", "B"], nasdaq100=[],
+        market_caps={"A": 100.0, "B": 200.0},
+        bars={"A": bars, "B": bars},
+        sectors={"A": "Technology"},
+    )
+    cfg = UniverseConfig(top_n_sp500=2, top_n_nasdaq100=2, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert [c.symbol for c in candidates] == ["A"]
+
+
+def test_build_universe_includes_resolved_sector_on_candidate(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0), Bar(102.0, 99.0, 101.0)]
+    client = FakeMarketDataClient(
+        sp500=["A"], nasdaq100=[],
+        market_caps={"A": 100.0},
+        bars={"A": bars},
+        sectors={"A": "Healthcare"},
+    )
+    cfg = UniverseConfig(top_n_sp500=1, top_n_nasdaq100=1, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert candidates[0].sector == "Healthcare"

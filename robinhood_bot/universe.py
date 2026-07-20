@@ -52,6 +52,7 @@ class Candidate:
     realized_vol: float
     atr_pct: float
     combined_rank: float
+    sector: str | None = None
 
 
 class MarketDataClient(Protocol):
@@ -220,13 +221,26 @@ def get_membership(
 def build_universe(
     client: MarketDataClient,
     cache_path: Path,
+    sector_cache_path: Path,
     cfg: UniverseConfig,
     today: date,
     force_refresh: bool = False,
 ) -> list[Candidate]:
     members = get_membership(client, cache_path, cfg, today, force_refresh)
+
+    sectors: dict[str, str | None] = {}
+    resolved_members = []
+    for member in members:
+        sector = get_sector(client, sector_cache_path, member.symbol)
+        if sector is None:
+            continue
+        sectors[member.symbol] = sector
+        resolved_members.append(member)
+
     leveraged = [CachedMember(symbol, "leveraged", 0.0) for symbol in cfg.leveraged_funds]
-    all_members = members + leveraged
+    for member in leveraged:
+        sectors[member.symbol] = None
+    all_members = resolved_members + leveraged
 
     lookback = max(cfg.realized_vol_window_days, cfg.atr_window_days) + 1
     realized_vols: dict[str, float] = {}
@@ -260,6 +274,7 @@ def build_universe(
             realized_vol=realized_vols[member.symbol],
             atr_pct=atr_pcts[member.symbol],
             combined_rank=score,
+            sector=sectors[member.symbol],
         ))
 
     candidates.sort(key=lambda c: c.combined_rank, reverse=True)
