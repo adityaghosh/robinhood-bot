@@ -174,11 +174,12 @@ from robinhood_bot.universe import get_membership, refresh_membership
 
 
 class FakeMarketDataClient:
-    def __init__(self, sp500=None, nasdaq100=None, market_caps=None, bars=None, raise_on_fetch=False):
+    def __init__(self, sp500=None, nasdaq100=None, market_caps=None, bars=None, sectors=None, raise_on_fetch=False):
         self.sp500 = sp500 or []
         self.nasdaq100 = nasdaq100 or []
         self.market_caps = market_caps or {}
         self.bars = bars or {}
+        self.sectors = sectors or {}
         self.raise_on_fetch = raise_on_fetch
         self.calls = []
 
@@ -201,6 +202,57 @@ class FakeMarketDataClient:
     def fetch_daily_bars(self, ticker, lookback_days):
         self.calls.append(f"bars:{ticker}")
         return self.bars.get(ticker, [])
+
+    def fetch_sector(self, ticker):
+        self.calls.append(f"sector:{ticker}")
+        return self.sectors.get(ticker)
+
+
+from robinhood_bot.universe import SectorCache, load_sector_cache, save_sector_cache, get_sector
+
+
+def test_load_sector_cache_returns_none_when_file_missing(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    assert load_sector_cache(path) is None
+
+
+def test_save_and_load_sector_cache_round_trip(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    save_sector_cache(path, SectorCache(sectors={"AAPL": "Technology"}))
+    loaded = load_sector_cache(path)
+    assert loaded.sectors == {"AAPL": "Technology"}
+
+
+def test_get_sector_returns_cached_value_without_fetching(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    save_sector_cache(path, SectorCache(sectors={"AAPL": "Technology"}))
+    client = FakeMarketDataClient()
+
+    sector = get_sector(client, path, "AAPL")
+
+    assert sector == "Technology"
+    assert "sector:AAPL" not in client.calls
+
+
+def test_get_sector_fetches_and_caches_on_cache_miss(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    client = FakeMarketDataClient(sectors={"MSFT": "Technology"})
+
+    sector = get_sector(client, path, "MSFT")
+
+    assert sector == "Technology"
+    reloaded = load_sector_cache(path)
+    assert reloaded.sectors == {"MSFT": "Technology"}
+
+
+def test_get_sector_returns_none_and_does_not_cache_on_fetch_failure(tmp_path):
+    path = tmp_path / "sector_cache.json"
+    client = FakeMarketDataClient(sectors={})
+
+    sector = get_sector(client, path, "UNKNOWN")
+
+    assert sector is None
+    assert load_sector_cache(path) is None
 
 
 def test_refresh_membership_dedupes_overlap_preferring_sp500_category():
