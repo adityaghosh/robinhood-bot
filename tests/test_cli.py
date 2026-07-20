@@ -30,10 +30,10 @@ def test_cli_state_command_includes_trading_mode(tmp_path, monkeypatch, capsys):
 
 def test_cli_universe_command_prints_json(monkeypatch, capsys):
     fake_candidates = [
-        universe.Candidate("AAPL", "sp500", 3.0e12, 0.25, 0.02, 1.0),
+        universe.Candidate("AAPL", "sp500", 3.0e12, 0.25, 0.02, 1.0, sector="Technology"),
     ]
 
-    def fake_build_universe(client, cache_path, cfg, today, force_refresh):
+    def fake_build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh):
         return fake_candidates
 
     monkeypatch.setattr(cli, "build_universe", fake_build_universe)
@@ -44,6 +44,7 @@ def test_cli_universe_command_prints_json(monkeypatch, capsys):
     output = json.loads(capsys.readouterr().out)
     assert output["candidates"][0]["symbol"] == "AAPL"
     assert output["candidates"][0]["combined_rank"] == 1.0
+    assert output["candidates"][0]["sector"] == "Technology"
 
 
 def test_cli_backtest_state_command_prints_json(tmp_path, monkeypatch, capsys):
@@ -127,13 +128,19 @@ def test_cli_backtest_run_command_delegates_to_backtest_commands(tmp_path, monke
     monkeypatch.setattr(cli, "HISTORICAL_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(cli, "BACKTEST_BASE_DIR", tmp_path / "backtests")
 
-    fake_candidates = [universe.Candidate("AAPL", "sp500", 3.0e12, 0.25, 0.02, 1.0)]
-    monkeypatch.setattr(cli, "build_universe", lambda client, cache_path, cfg, today: fake_candidates)
+    fake_candidates = [universe.Candidate("AAPL", "sp500", 3.0e12, 0.25, 0.02, 1.0, sector="Technology")]
+    monkeypatch.setattr(
+        cli, "build_universe", lambda client, cache_path, sector_cache_path, cfg, today: fake_candidates
+    )
 
     captured = {}
 
-    def fake_cmd_backtest_run(run_id, base_dir, starting_cash, start, end, candidate_symbols, store, cfg, benchmark_symbol):
+    def fake_cmd_backtest_run(
+        run_id, base_dir, starting_cash, start, end, candidate_symbols, candidate_sectors, store, cfg,
+        benchmark_symbol,
+    ):
         captured["candidate_symbols"] = candidate_symbols
+        captured["candidate_sectors"] = candidate_sectors
         return {"run_id": run_id, "trading_days": 0}
 
     monkeypatch.setattr(cli.backtest_commands, "cmd_backtest_run", fake_cmd_backtest_run)
@@ -142,6 +149,7 @@ def test_cli_backtest_run_command_delegates_to_backtest_commands(tmp_path, monke
 
     assert exit_code == 0
     assert captured["candidate_symbols"] == ["AAPL"]
+    assert captured["candidate_sectors"] == {"AAPL": "Technology"}
     output = json.loads(capsys.readouterr().out)
     assert output["run_id"] == "run1"
 
@@ -160,3 +168,44 @@ def test_cli_backtest_report_command_delegates_to_backtest_commands(tmp_path, mo
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
     assert output["total_return_pct"] == 0.05
+
+
+def test_cli_risk_check_buy_passes_sector_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "LEDGER_PATH", tmp_path / "ledger.json")
+
+    captured = {}
+
+    def fake_cmd_risk_check(ledger_path, starting_cash, action, symbol, proposed_value, prices, cfg, sector=None):
+        captured["sector"] = sector
+        return {"approved": True, "reason": "approved", "max_position_value": 0.0}
+
+    monkeypatch.setattr(cli.commands, "cmd_risk_check", fake_cmd_risk_check)
+
+    exit_code = cli.main([
+        "risk-check", "buy", "MSFT", "--value", "500", "--prices-json", "{}", "--sector", "Technology",
+    ])
+
+    assert exit_code == 0
+    assert captured["sector"] == "Technology"
+
+
+def test_cli_backtest_risk_check_passes_sector_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "BACKTEST_BASE_DIR", tmp_path)
+
+    captured = {}
+
+    def fake_cmd_backtest_risk_check(
+        run_id, base_dir, starting_cash, action, symbol, proposed_value, prices, cfg, sector=None,
+    ):
+        captured["sector"] = sector
+        return {"approved": True, "reason": "approved", "max_position_value": 0.0}
+
+    monkeypatch.setattr(cli.backtest_commands, "cmd_backtest_risk_check", fake_cmd_backtest_risk_check)
+
+    exit_code = cli.main([
+        "backtest", "risk-check", "buy", "MSFT", "--run", "run1", "--asof", "2026-01-05",
+        "--value", "500", "--prices-json", "{}", "--sector", "Financials",
+    ])
+
+    assert exit_code == 0
+    assert captured["sector"] == "Financials"

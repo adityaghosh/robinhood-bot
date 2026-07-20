@@ -16,6 +16,7 @@ from .universe_client import LiveHistoricalDataFetcher, LiveMarketDataClient
 LEDGER_PATH = Path("data/ledger.json")
 TRADE_LOG_PATH = Path("data/trade_log.csv")
 UNIVERSE_CACHE_PATH = Path("data/universe_cache.json")
+SECTOR_CACHE_PATH = Path("data/sector_cache.json")
 BACKTEST_BASE_DIR = Path("data/backtests")
 HISTORICAL_CACHE_DIR = Path("data/historical_price_cache")
 STARTING_CASH = 10_000.0
@@ -48,12 +49,12 @@ def _dispatch_backtest(args) -> dict:
     if args.backtest_command == "risk-check":
         return backtest_commands.cmd_backtest_risk_check(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, args.action, args.symbol, args.value,
-            _parse_prices(args.prices_json), cfg,
+            _parse_prices(args.prices_json), cfg, sector=args.sector,
         )
     if args.backtest_command == "record-fill":
         return backtest_commands.cmd_backtest_record_fill(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, args.action, args.symbol,
-            args.qty, args.price, date.fromisoformat(args.asof), args.reason,
+            args.qty, args.price, date.fromisoformat(args.asof), args.reason, sector=args.sector,
         )
     if args.backtest_command == "check-stop-losses":
         return backtest_commands.cmd_backtest_check_stop_losses(
@@ -73,11 +74,12 @@ def _dispatch_backtest(args) -> dict:
     if args.backtest_command == "run":
         store = _build_price_store()
         candidates = build_universe(
-            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, UniverseConfig(), date.today(),
+            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, SECTOR_CACHE_PATH, UniverseConfig(), date.today(),
         )
+        candidate_sectors = {c.symbol: c.sector for c in candidates if c.sector is not None}
         return backtest_commands.cmd_backtest_run(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, date.fromisoformat(args.start),
-            date.fromisoformat(args.end), [c.symbol for c in candidates], store, cfg,
+            date.fromisoformat(args.end), [c.symbol for c in candidates], candidate_sectors, store, cfg,
             BENCHMARK_SYMBOL,
         )
     if args.backtest_command == "report":
@@ -99,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     p_risk.add_argument("symbol")
     p_risk.add_argument("--value", type=float, default=0.0)
     p_risk.add_argument("--prices-json", default=None)
+    p_risk.add_argument("--sector", default=None)
 
     p_fill = sub.add_parser("record-fill")
     p_fill.add_argument("action", choices=["buy", "sell"])
@@ -106,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     p_fill.add_argument("--qty", type=float, required=True)
     p_fill.add_argument("--price", type=float, required=True)
     p_fill.add_argument("--reason", default="")
+    p_fill.add_argument("--sector", default=None)
 
     p_stop = sub.add_parser("check-stop-losses")
     p_stop.add_argument("--prices-json", required=True)
@@ -134,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_risk.add_argument("--asof", required=True)
     p_bt_risk.add_argument("--value", type=float, default=0.0)
     p_bt_risk.add_argument("--prices-json", default=None)
+    p_bt_risk.add_argument("--sector", default=None)
 
     p_bt_fill = backtest_sub.add_parser("record-fill")
     p_bt_fill.add_argument("action", choices=["buy", "sell"])
@@ -143,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_fill.add_argument("--qty", type=float, required=True)
     p_bt_fill.add_argument("--price", type=float, required=True)
     p_bt_fill.add_argument("--reason", default="")
+    p_bt_fill.add_argument("--sector", default=None)
 
     p_bt_stop = backtest_sub.add_parser("check-stop-losses")
     p_bt_stop.add_argument("--run", required=True)
@@ -178,12 +184,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "risk-check":
         result = commands.cmd_risk_check(
             LEDGER_PATH, STARTING_CASH, args.action, args.symbol, args.value,
-            _parse_prices(args.prices_json), cfg,
+            _parse_prices(args.prices_json), cfg, sector=args.sector,
         )
     elif args.command == "record-fill":
         result = commands.cmd_record_fill(
             LEDGER_PATH, TRADE_LOG_PATH, STARTING_CASH, args.action, args.symbol,
-            args.qty, args.price, today, args.reason,
+            args.qty, args.price, today, args.reason, sector=args.sector,
         )
     elif args.command == "check-stop-losses":
         result = commands.cmd_check_stop_losses(
@@ -196,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.mode:
             universe_cfg.ranking_mode = args.mode
         candidates = build_universe(
-            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, universe_cfg, today, args.refresh
+            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, SECTOR_CACHE_PATH, universe_cfg, today, args.refresh
         )
         result = {
             "candidates": [
@@ -207,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
                     "realized_vol": c.realized_vol,
                     "atr_pct": c.atr_pct,
                     "combined_rank": c.combined_rank,
+                    "sector": c.sector,
                 }
                 for c in candidates
             ]
