@@ -168,6 +168,28 @@ def average_true_range_pct(bars: list[Bar]) -> float:
     return (atr / last_close) if last_close else 0.0
 
 
+def relative_strength_index(closes: list[float], window_days: int = 14) -> float:
+    if len(closes) < window_days + 1:
+        return 50.0
+    changes = [closes[i] - closes[i - 1] for i in range(len(closes) - window_days, len(closes))]
+    gains = [c for c in changes if c > 0]
+    losses = [-c for c in changes if c < 0]
+    avg_gain = sum(gains) / window_days
+    avg_loss = sum(losses) / window_days
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def is_bullish_ma_trend(closes: list[float], short_window: int = 5, long_window: int = 20) -> bool | None:
+    if len(closes) < long_window:
+        return None
+    short_avg = sum(closes[-short_window:]) / short_window
+    long_avg = sum(closes[-long_window:]) / long_window
+    return short_avg > long_avg
+
+
 def percentile_ranks(values: dict[str, float]) -> dict[str, float]:
     if not values:
         return {}

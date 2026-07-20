@@ -154,6 +154,47 @@ def test_average_true_range_pct_known_value():
     assert average_true_range_pct(bars) == pytest.approx(0.030744336569579287)
 
 
+from robinhood_bot.universe import relative_strength_index
+
+
+def test_relative_strength_index_insufficient_data_is_neutral():
+    assert relative_strength_index([100.0, 101.0, 102.0]) == 50.0
+    assert relative_strength_index([]) == 50.0
+
+
+def test_relative_strength_index_all_gains_is_100():
+    closes = [100.0 + i for i in range(15)]
+    assert relative_strength_index(closes) == pytest.approx(100.0)
+
+
+def test_relative_strength_index_all_losses_is_zero():
+    closes = [114.0 - i for i in range(15)]
+    assert relative_strength_index(closes) == pytest.approx(0.0)
+
+
+def test_relative_strength_index_mixed_known_value():
+    closes = [100.0, 102.0, 101.0, 103.0, 102.0, 104.0, 103.0, 105.0, 104.0, 106.0, 105.0, 107.0, 106.0, 108.0, 107.0]
+    assert relative_strength_index(closes) == pytest.approx(66.666666, rel=1e-4)
+
+
+from robinhood_bot.universe import is_bullish_ma_trend
+
+
+def test_is_bullish_ma_trend_insufficient_data_is_none():
+    assert is_bullish_ma_trend([100.0] * 10) is None
+    assert is_bullish_ma_trend([]) is None
+
+
+def test_is_bullish_ma_trend_true_when_short_average_above_long_average():
+    closes = [90.0] * 15 + [110.0] * 5
+    assert is_bullish_ma_trend(closes) is True
+
+
+def test_is_bullish_ma_trend_false_when_short_average_at_or_below_long_average():
+    closes = [110.0] * 15 + [90.0] * 5
+    assert is_bullish_ma_trend(closes) is False
+
+
 from robinhood_bot.universe import percentile_ranks
 
 
