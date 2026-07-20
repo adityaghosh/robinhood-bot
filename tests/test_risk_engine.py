@@ -4,7 +4,10 @@ from datetime import date, timedelta
 import pytest
 
 from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
-from robinhood_bot.risk_engine import RiskConfig, ExitAction, evaluate_position, max_new_position_value, circuit_breaker_tripped, evaluate_buy, evaluate_sell
+from robinhood_bot.risk_engine import (
+    RiskConfig, ExitAction, current_weekly_tier, evaluate_position, evaluate_profit_exits,
+    max_new_position_value, circuit_breaker_tripped, evaluate_buy, evaluate_sell,
+)
 
 
 def _position(**overrides):
@@ -20,15 +23,8 @@ def _position(**overrides):
     return Position(**defaults)
 
 
-def test_profit_target_hit_triggers_sell():
-    cfg = RiskConfig(profit_target_pct=0.08)
-    position = _position(entry_price=100.0)
-    result = evaluate_position(position, current_price=110.0, today=date(2026, 7, 10), cfg=cfg)
-    assert result.action == ExitAction.SELL
-
-
 def test_small_loss_within_stop_loss_stays_active():
-    cfg = RiskConfig(stop_loss_pct=0.05, profit_target_pct=0.08)
+    cfg = RiskConfig(stop_loss_pct=0.05)
     position = _position(entry_price=100.0)
     result = evaluate_position(position, current_price=97.0, today=date(2026, 7, 10), cfg=cfg)
     assert result.action == ExitAction.HOLD
@@ -71,7 +67,7 @@ def test_waiting_past_grace_period_promotes_to_long_hold():
 
 
 def test_recovery_from_waiting_returns_to_active():
-    cfg = RiskConfig(stop_loss_pct=0.05, profit_target_pct=0.08)
+    cfg = RiskConfig(stop_loss_pct=0.05)
     position = _position(
         entry_price=100.0, status=PositionStatus.WAITING, underwater_since=date(2026, 7, 5)
     )
@@ -192,3 +188,68 @@ def test_evaluate_sell_rejects_unheld_symbol():
     state = PortfolioState(cash=0.0)
     decision = evaluate_sell(state, "NFLX")
     assert decision.approved is False
+
+
+def test_current_weekly_tier_at_zero_realized():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(0.0, cfg) == 500.0
+
+
+def test_current_weekly_tier_escalates_past_first_goal():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(520.0, cfg) == 1000.0
+
+
+def test_current_weekly_tier_handles_negative_realized_pnl():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert current_weekly_tier(-200.0, cfg) == 0.0
+
+
+def test_evaluate_profit_exits_sells_single_winner_reaching_tier():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={"AAPL": 160.0}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == [position]
+
+
+def test_evaluate_profit_exits_sells_biggest_winners_first_until_tier_cleared():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    big = _position(symbol="BIG", qty=10, entry_price=100.0)
+    medium = _position(symbol="MED", qty=10, entry_price=100.0)
+    small = _position(symbol="SML", qty=10, entry_price=100.0)
+
+    result = evaluate_profit_exits(
+        [small, big, medium],
+        prices={"BIG": 140.0, "MED": 120.0, "SML": 105.0},
+        week_realized_pnl=0.0, cfg=cfg,
+    )
+
+    assert result == [big, medium]
+
+
+def test_evaluate_profit_exits_escalates_tier_when_goal_already_banked():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={"AAPL": 150.0}, week_realized_pnl=520.0, cfg=cfg)
+    assert result == [position]
+
+
+def test_evaluate_profit_exits_sells_nothing_without_positive_gains():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={"AAPL": 95.0}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == []
+
+
+def test_evaluate_profit_exits_skips_candidate_with_missing_quote():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    position = _position(symbol="AAPL", qty=10, entry_price=100.0)
+    result = evaluate_profit_exits([position], prices={}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == []
+
+
+def test_evaluate_profit_exits_treats_long_hold_positions_as_eligible():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    long_hold = _position(symbol="TSLA", qty=5, entry_price=200.0, status=PositionStatus.LONG_HOLD)
+    result = evaluate_profit_exits([long_hold], prices={"TSLA": 320.0}, week_realized_pnl=0.0, cfg=cfg)
+    assert result == [long_hold]

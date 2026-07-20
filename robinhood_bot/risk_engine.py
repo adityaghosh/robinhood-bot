@@ -11,7 +11,7 @@ from .portfolio_state import Position, PositionStatus, PortfolioState
 class RiskConfig:
     max_active_positions: int = 5
     stop_loss_pct: float = 0.05
-    profit_target_pct: float = 0.08
+    weekly_profit_goal: float = 500.0
     grace_period_days: int = 5
     max_position_pct: float = 0.20
     min_position_pct: float = 0.05
@@ -37,9 +37,6 @@ def evaluate_position(
 ) -> PositionEvaluation:
     pnl_pct = (current_price - position.entry_price) / position.entry_price
 
-    if pnl_pct >= cfg.profit_target_pct:
-        return PositionEvaluation(ExitAction.SELL, position.status, None)
-
     if pnl_pct <= -cfg.stop_loss_pct:
         underwater_since = position.underwater_since or today
         days_underwater = (today - underwater_since).days
@@ -48,6 +45,34 @@ def evaluate_position(
         return PositionEvaluation(ExitAction.HOLD, PositionStatus.WAITING, underwater_since)
 
     return PositionEvaluation(ExitAction.HOLD, PositionStatus.ACTIVE, None)
+
+
+def current_weekly_tier(week_realized_pnl: float, cfg: RiskConfig) -> float:
+    return (int(week_realized_pnl // cfg.weekly_profit_goal) + 1) * cfg.weekly_profit_goal
+
+
+def evaluate_profit_exits(
+    positions: list[Position], prices: dict[str, float], week_realized_pnl: float, cfg: RiskConfig,
+) -> list[Position]:
+    gains = []
+    for position in positions:
+        price = prices.get(position.symbol)
+        if price is None:
+            continue
+        gain = (price - position.entry_price) * position.qty
+        if gain > 0:
+            gains.append((gain, position))
+    gains.sort(key=lambda g: g[0], reverse=True)
+
+    tier = current_weekly_tier(week_realized_pnl, cfg)
+    to_sell = []
+    running = week_realized_pnl
+    for gain, position in gains:
+        if running >= tier:
+            break
+        to_sell.append(position)
+        running += gain
+    return to_sell
 
 
 def max_new_position_value(
