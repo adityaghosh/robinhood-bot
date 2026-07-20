@@ -12,7 +12,7 @@ from typing import Protocol
 class UniverseConfig:
     top_n_sp500: int = 100
     top_n_nasdaq100: int = 20
-    leveraged_funds: list[str] = field(default_factory=lambda: ["TQQQ", "UPRO", "SOXL"])
+    leveraged_funds: list[str] = field(default_factory=lambda: ["TQQQ", "UPRO"])
     realized_vol_window_days: int = 20
     atr_window_days: int = 14
     cache_max_age_days: int = 7

@@ -2,8 +2,9 @@
 
 An LLM-assisted short-term trading bot for a curated universe of
 well-established stocks (top ~100 S&P 500 + top ~20 Nasdaq-100 by market
-cap) plus leveraged full-index funds (TQQQ, UPRO, SOXL), pursuing a
-monthly return target. Claude Code is the decision-making agent; Python
+cap) plus leveraged broad-market index funds (TQQQ, UPRO) — no leveraged
+sector funds — pursuing a monthly return target. Claude Code is the
+decision-making agent; Python
 enforces every hard risk limit and Claude cannot override a rejected
 trade. Starts in paper mode (simulated fills against real, live prices)
 with a one-line switch to live trading once trusted.

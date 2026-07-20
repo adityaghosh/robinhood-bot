@@ -59,10 +59,15 @@ class LiveMarketDataClient:
 
     def fetch_sector(self, ticker: str) -> str | None:
         try:
-            # NOTE: sector isn't available on fast_info -- only the full
-            # (slower) .info property exposes GICS sector classification.
+            # NOTE: deliberately reads GICS *industry* (e.g. "Semiconductors",
+            # "Computer Hardware"), not the broader "sector" (e.g.
+            # "Technology") -- the concentration check needs sub-industry
+            # granularity so a semiconductor position doesn't block an
+            # unrelated Technology name (e.g. IT services) from being held
+            # at the same time. Neither is available on fast_info -- only
+            # the full (slower) .info property exposes this classification.
             info = yf.Ticker(ticker).info
-            sector = info.get("sector")
+            sector = info.get("industry")
         except Exception:
             return None
         return sector if sector else None

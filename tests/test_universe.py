@@ -28,7 +28,7 @@ def test_universe_config_defaults():
     cfg = UniverseConfig()
     assert cfg.top_n_sp500 == 100
     assert cfg.top_n_nasdaq100 == 20
-    assert cfg.leveraged_funds == ["TQQQ", "UPRO", "SOXL"]
+    assert cfg.leveraged_funds == ["TQQQ", "UPRO"]
     assert cfg.realized_vol_window_days == 20
     assert cfg.atr_window_days == 14
     assert cfg.cache_max_age_days == 7

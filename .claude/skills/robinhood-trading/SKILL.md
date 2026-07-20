@@ -50,16 +50,18 @@ python -m robinhood_bot.cli universe
 
 This uses a weekly-cached membership list by default (fast). Only pass
 `--refresh` if explicitly asked to force a refresh. Each candidate's
-`sector` field (its GICS sector, or `null` for the three leveraged funds)
-is needed later in Step 7 when gating a BUY — no separate lookup is
-required.
+`sector` field (its GICS *industry* — e.g. "Semiconductors" or "Computer
+Hardware", not the broader GICS sector — or `null` for the two leveraged
+funds) is needed later in Step 7 when gating a BUY — no separate lookup
+is required.
 
 ## Step 3 — Build today's research shortlist
 
 From the `candidates` list (sorted by `combined_rank`, descending), take:
 - The top 15 candidates whose `category` is `"sp500"` or `"nasdaq100"`.
-- All candidates whose `category` is `"leveraged"` (there are only 3 —
-  TQQQ, UPRO, SOXL — so this just means include all of them).
+- All candidates whose `category` is `"leveraged"` (there are only 2 —
+  TQQQ, UPRO, both broad-market index funds, no leveraged sector funds —
+  so this just means include all of them).
 - Every symbol from Step 1's `active_positions` and `long_hold_positions`
   that isn't already in the shortlist, so open positions are always
   reconsidered even if they've fallen out of the top rankings.
