@@ -6,8 +6,8 @@ from pathlib import Path
 from . import ledger
 from .portfolio_state import Position, PositionStatus, roll_month_if_needed, roll_week_if_needed
 from .risk_engine import (
-    RiskConfig, ExitAction, current_weekly_tier, evaluate_buy, evaluate_position,
-    evaluate_profit_exits, evaluate_sell,
+    RiskConfig, ExitAction, bonus_active_slots, current_weekly_tier, evaluate_buy,
+    evaluate_position, evaluate_profit_exits, evaluate_sell,
 )
 
 
@@ -68,6 +68,10 @@ def cmd_state(
         "week": state.week,
         "week_realized_pnl": state.week_realized_pnl,
         "week_profit_target": current_weekly_tier(state.week_realized_pnl, cfg),
+        "prior_week_realized_pnl": state.prior_week_realized_pnl,
+        "effective_max_active_positions": cfg.max_active_positions + bonus_active_slots(
+            state.prior_week_realized_pnl, cfg
+        ),
     }
 
 

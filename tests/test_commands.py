@@ -75,6 +75,20 @@ def test_cmd_state_includes_trading_mode(tmp_path):
     assert result["trading_mode"] == "live"
 
 
+def test_cmd_state_includes_effective_max_active_positions_with_bonus(tmp_path):
+    ledger_path = tmp_path / "ledger.json"
+    ledger.save_state(ledger_path, PortfolioState(cash=10_000.0, week="2026-W28", prior_week_realized_pnl=1_200.0))
+    cfg = RiskConfig(max_active_positions=5, weekly_profit_goal=500.0, max_bonus_active_slots=2)
+
+    result = commands.cmd_state(
+        ledger_path, starting_cash=0.0, prices={}, today=date(2026, 7, 10), trading_mode="paper",
+        cfg=cfg,
+    )
+
+    assert result["prior_week_realized_pnl"] == 1_200.0
+    assert result["effective_max_active_positions"] == 6
+
+
 def test_cmd_risk_check_buy_approves_happy_path(tmp_path):
     ledger_path = tmp_path / "ledger.json"
     ledger.save_state(ledger_path, PortfolioState(cash=10_000.0, month_start_equity=10_000.0))
