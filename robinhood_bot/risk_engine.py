@@ -10,6 +10,7 @@ from .portfolio_state import Position, PositionStatus, PortfolioState
 @dataclass
 class RiskConfig:
     max_active_positions: int = 5
+    max_positions_per_sector: int = 1
     stop_loss_pct: float = 0.05
     weekly_profit_goal: float = 500.0
     grace_period_days: int = 5
@@ -106,11 +107,21 @@ def evaluate_buy(
     proposed_value: float,
     total_equity: float,
     cfg: RiskConfig,
+    sector: str | None,
 ) -> BuyDecision:
     max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
 
     if state.is_held(symbol):
         return BuyDecision(False, "symbol already held", max_value)
+
+    if sector is not None:
+        sector_count = sum(1 for p in state.active_positions if p.sector == sector)
+        if sector_count >= cfg.max_positions_per_sector:
+            return BuyDecision(
+                False,
+                f"sector concentration: already at the {cfg.max_positions_per_sector}-position limit for {sector}",
+                max_value,
+            )
 
     if circuit_breaker_tripped(state.month_start_equity, total_equity, cfg):
         return BuyDecision(False, "monthly circuit breaker tripped", max_value)
