@@ -41,6 +41,8 @@ def state_to_dict(state: PortfolioState) -> dict:
         "long_hold_positions": [_position_to_dict(p) for p in state.long_hold_positions],
         "month": state.month,
         "month_start_equity": state.month_start_equity,
+        "week": state.week,
+        "week_realized_pnl": state.week_realized_pnl,
     }
 
 
@@ -51,6 +53,8 @@ def state_from_dict(data: dict) -> PortfolioState:
         long_hold_positions=[_position_from_dict(p) for p in data["long_hold_positions"]],
         month=data.get("month", ""),
         month_start_equity=data.get("month_start_equity", 0.0),
+        week=data.get("week", ""),
+        week_realized_pnl=data.get("week_realized_pnl", 0.0),
     )
 
 

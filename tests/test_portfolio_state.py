@@ -1,6 +1,8 @@
 from datetime import date
 
-from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState, roll_month_if_needed
+from robinhood_bot.portfolio_state import (
+    Position, PositionStatus, PortfolioState, roll_month_if_needed, roll_week_if_needed,
+)
 
 
 def test_new_portfolio_has_no_positions():
@@ -54,3 +56,24 @@ def test_roll_month_if_needed_no_change_within_same_month():
     roll_month_if_needed(state, today=date(2026, 7, 15), current_equity=11_000.0)
     assert state.month == "2026-07"
     assert state.month_start_equity == 9_500.0
+
+
+def test_roll_week_if_needed_updates_on_new_week():
+    state = PortfolioState(cash=10_000.0, week="2026-W01", week_realized_pnl=250.0)
+    roll_week_if_needed(state, today=date(2026, 1, 12))
+    assert state.week == "2026-W03"
+    assert state.week_realized_pnl == 0.0
+
+
+def test_roll_week_if_needed_no_change_within_same_week():
+    state = PortfolioState(cash=10_000.0, week="2026-W03", week_realized_pnl=250.0)
+    roll_week_if_needed(state, today=date(2026, 1, 15))
+    assert state.week == "2026-W03"
+    assert state.week_realized_pnl == 250.0
+
+
+def test_roll_week_if_needed_handles_iso_year_boundary():
+    state = PortfolioState(cash=10_000.0, week="2025-W52", week_realized_pnl=100.0)
+    roll_week_if_needed(state, today=date(2025, 12, 29))
+    assert state.week == "2026-W01"
+    assert state.week_realized_pnl == 0.0

@@ -32,6 +32,8 @@ class PortfolioState:
     long_hold_positions: list[Position] = field(default_factory=list)
     month: str = ""
     month_start_equity: float = 0.0
+    week: str = ""
+    week_realized_pnl: float = 0.0
 
     def active_slot_count(self) -> int:
         return len(self.active_positions)
@@ -60,4 +62,13 @@ def roll_month_if_needed(state: PortfolioState, today: date, current_equity: flo
     if state.month != current_month:
         state.month = current_month
         state.month_start_equity = current_equity
+    return state
+
+
+def roll_week_if_needed(state: PortfolioState, today: date) -> PortfolioState:
+    iso_year, iso_week, _ = today.isocalendar()
+    current_week = f"{iso_year:04d}-W{iso_week:02d}"
+    if state.week != current_week:
+        state.week = current_week
+        state.week_realized_pnl = 0.0
     return state

@@ -51,3 +51,13 @@ def test_append_trade_log_writes_header_once(tmp_path):
     contents = path.read_text().splitlines()
     assert contents[0] == "timestamp,action,symbol,qty,price,reason"
     assert len(contents) == 3
+
+
+def test_save_and_load_round_trip_preserves_week_tracking(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(cash=8_000.0, week="2026-W28", week_realized_pnl=350.0)
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.week == "2026-W28"
+    assert loaded.week_realized_pnl == 350.0
