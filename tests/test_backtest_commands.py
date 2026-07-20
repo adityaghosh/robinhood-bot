@@ -87,14 +87,14 @@ def test_cmd_backtest_check_stop_losses_uses_isolated_ledger(tmp_path):
         cash=0.0,
         active_positions=[Position("AAPL", 10, 100.0, date(2026, 1, 1), PositionStatus.ACTIVE)],
     ))
-    cfg = RiskConfig(profit_target_pct=0.08)
+    cfg = RiskConfig()
 
     result = backtest_commands.cmd_backtest_check_stop_losses(
         "run1", tmp_path, starting_cash=0.0, prices={"AAPL": 110.0}, asof=date(2026, 1, 10),
         cfg=cfg, apply=True,
     )
 
-    assert result["results"][0]["action"] == "SELL"
+    assert result["results"][-1]["action"] == "SELL"
 
 
 def test_cmd_backtest_mark_day_appends_equity_curve_row(tmp_path):
@@ -234,7 +234,7 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     fetcher = FakeFetcher()
     store = HistoricalPriceStore(fetcher, tmp_path / "cache")
     cfg = RiskConfig(
-        max_active_positions=1, stop_loss_pct=0.05, profit_target_pct=0.08,
+        max_active_positions=1, stop_loss_pct=0.05, weekly_profit_goal=200.0,
         max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
     )
 
@@ -259,6 +259,8 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     assert final_state.cash == pytest.approx(5_216.0)
     assert final_state.month == "2026-01"
     assert final_state.month_start_equity == pytest.approx(10_000.0)
+    assert final_state.week == "2026-W02"
+    assert final_state.week_realized_pnl == pytest.approx(400.0)
 
     with paths.trade_log.open() as f:
         rows = list(csv.DictReader(f))
@@ -305,7 +307,7 @@ def test_cmd_backtest_run_promotes_expired_underwater_position_to_long_hold(tmp_
 
     store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
     cfg = RiskConfig(
-        max_active_positions=1, stop_loss_pct=0.05, profit_target_pct=0.08,
+        max_active_positions=1, stop_loss_pct=0.05,
         grace_period_days=5, max_position_pct=1.0, min_position_pct=1.0,
     )
 
@@ -324,6 +326,43 @@ def test_cmd_backtest_run_promotes_expired_underwater_position_to_long_hold(tmp_
     # the freed slot could be (and here, is) filled by the next top candidate.
     assert final_state.active_slot_count() == 1
     assert final_state.active_positions[0].symbol == "B"
+
+
+def test_cmd_backtest_run_sweeps_recovered_long_hold_position_for_profit(tmp_path):
+    bars = {
+        "A": [HistoricalBar(date(2026, 1, 2), 148.0, 151.0, 147.0, 150.0)],
+        "SPY": [HistoricalBar(date(2026, 1, 2), 400.0, 401.0, 399.0, 400.0)],
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars[symbol] if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(max_active_positions=0, weekly_profit_goal=300.0)
+
+    paths = backtest_commands.resolve_run_paths("run2", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=1_000.0,
+        long_hold_positions=[Position("A", 10, 100.0, date(2025, 12, 1), PositionStatus.LONG_HOLD)],
+    ))
+
+    backtest_commands.cmd_backtest_run(
+        "run2", tmp_path, starting_cash=1_000.0, start=date(2026, 1, 2), end=date(2026, 1, 2),
+        candidate_symbols=[], store=store, cfg=cfg,
+    )
+
+    final_state = ledger.load_state(paths.ledger, starting_cash=1_000.0)
+    assert final_state.long_hold_positions == []
+    assert final_state.cash == pytest.approx(2_500.0)
+    assert final_state.week_realized_pnl == pytest.approx(500.0)
+
+    with paths.trade_log.open() as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["action"] == "SELL"
+    assert rows[0]["symbol"] == "A"
+    assert rows[0]["reason"] == "weekly profit-goal exit"
 
 
 def test_cmd_backtest_report_computes_return_and_benchmark(tmp_path):

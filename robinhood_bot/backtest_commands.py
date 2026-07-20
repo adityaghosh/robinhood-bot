@@ -8,8 +8,11 @@ from pathlib import Path
 
 from . import commands, ledger
 from .backtest_data import HistoricalPriceStore
-from .portfolio_state import roll_month_if_needed
-from .risk_engine import ExitAction, RiskConfig, evaluate_buy, evaluate_position, max_new_position_value
+from .portfolio_state import roll_month_if_needed, roll_week_if_needed
+from .risk_engine import (
+    ExitAction, RiskConfig, evaluate_buy, evaluate_position, evaluate_profit_exits,
+    max_new_position_value,
+)
 from .universe import average_true_range_pct, percentile_ranks, realized_volatility
 
 
@@ -166,7 +169,11 @@ def cmd_backtest_run(
         store.prefetch(symbol, start - timedelta(days=lookback_days), end)
 
     for today in trading_days:
-        # 1. Exits: evaluate every active position against today's close.
+        # 1. Exits: evaluate every active position's stop-loss/grace-period state.
+        # `evaluate_position` never returns SELL — it only ever moves a position
+        # between HOLD/WAITING/PROMOTE_LONG_HOLD, so this phase never touches
+        # cash and never needs to call `cmd_record_fill` (unlike before this
+        # phase absorbed the profit-target branch too).
         state = ledger.load_state(paths.ledger, starting_cash)
         remaining_active = []
         for position in state.active_positions:
@@ -175,12 +182,6 @@ def cmd_backtest_run(
                 remaining_active.append(position)
                 continue
             evaluation = evaluate_position(position, price, today, cfg)
-            if evaluation.action == ExitAction.SELL:
-                commands.cmd_record_fill(
-                    paths.ledger, paths.trade_log, starting_cash, "sell", position.symbol,
-                    position.qty, price, today, "backtest exit",
-                )
-                continue
             position.status = evaluation.new_status
             position.underwater_since = evaluation.new_underwater_since
             if evaluation.action == ExitAction.PROMOTE_LONG_HOLD:
@@ -188,23 +189,34 @@ def cmd_backtest_run(
             else:
                 remaining_active.append(position)
         state.active_positions = remaining_active
-        # `cmd_record_fill` above does its own independent load/save cycle against
-        # the ledger file for each sell, so it already persisted the cash credit
-        # for this sell on disk. Our in-memory `state.cash` is still the pre-sell
-        # snapshot taken at the top of the loop, so pull the up-to-date cash back
-        # in here before we overwrite the file, or we'd clobber every sell's cash
-        # credit with the stale pre-sell balance.
-        state.cash = ledger.load_state(paths.ledger, starting_cash).cash
         ledger.save_state(paths.ledger, state)
 
-        # Roll the monthly circuit-breaker baseline exactly like `cmd_state` does,
-        # since this loop never calls `cmd_state` itself.
+        # Roll the monthly circuit-breaker baseline and the weekly profit-goal
+        # tracker exactly like `cmd_state` does, since this loop never calls
+        # `cmd_state` itself.
         state = ledger.load_state(paths.ledger, starting_cash)
         cash, positions_value = _total_equity(state, store, today)
         roll_month_if_needed(state, today, cash + positions_value)
+        roll_week_if_needed(state, today)
         ledger.save_state(paths.ledger, state)
 
-        # 2. Entries: fill free slots with the top-ranked candidate not already held.
+        # 2. Profit-taking: sell the biggest winners (active or long-hold) needed
+        # to reach this week's current tier — see risk_engine.evaluate_profit_exits.
+        state = ledger.load_state(paths.ledger, starting_cash)
+        profit_candidates = state.active_positions + state.long_hold_positions
+        profit_prices = {
+            p.symbol: price
+            for p in profit_candidates
+            if (price := store.get_close(p.symbol, today)) is not None
+        }
+        for position in evaluate_profit_exits(profit_candidates, profit_prices, state.week_realized_pnl, cfg):
+            commands.cmd_record_fill(
+                paths.ledger, paths.trade_log, starting_cash, "sell", position.symbol,
+                position.qty, profit_prices[position.symbol], today, "weekly profit-goal exit",
+            )
+            state = ledger.load_state(paths.ledger, starting_cash)
+
+        # 3. Entries: fill free slots with the top-ranked candidate not already held.
         free_slots = cfg.max_active_positions - state.active_slot_count()
         if free_slots > 0:
             held = {p.symbol for p in state.active_positions + state.long_hold_positions}
