@@ -492,3 +492,22 @@ def test_build_universe_includes_resolved_sector_on_candidate(tmp_path):
     candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert candidates[0].sector == "Healthcare"
+
+
+def test_build_universe_includes_rsi_and_ma_trend_on_candidate(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0 + i) for i in range(25)]
+    client = FakeMarketDataClient(
+        sp500=["A"], nasdaq100=[],
+        market_caps={"A": 100.0},
+        bars={"A": bars},
+        sectors={"A": "Healthcare"},
+    )
+    cfg = UniverseConfig(top_n_sp500=1, top_n_nasdaq100=1, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert candidates[0].rsi == pytest.approx(100.0)
+    assert candidates[0].ma_trend_bullish is True
