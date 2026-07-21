@@ -37,13 +37,18 @@ Robinhood Gold. You'll fund a dedicated Agentic account separately from
 your main brokerage account — that's the only account this bot can ever
 touch, in either mode.
 
-Robinhood's documented MCP tools include `get_accounts`, `get_portfolio`,
-`get_equity_positions`, `get_equity_quotes`, `get_equity_orders`,
-`place_equity_order`, and `cancel_equity_order`. Verify these names
-against your actual connected tool list the first time you run either
-skill below — if a name has changed, update it directly in the
+Both skills are wired to these confirmed MCP tool names: `get_accounts`
+(resolve the dedicated Agentic account by `agentic_allowed: true`),
+`get_equity_quotes` and `get_equity_historicals` (pricing/indicators, in
+both modes), and, live-mode order execution only: `get_equity_tradability`
+(pick a currently-open session), `get_equity_price_book` (marketable
+limit price from the bid/ask), `place_equity_order`, and
+`get_equity_orders` (confirm the actual fill before recording it — never
+`review_equity_order`, which the skills deliberately skip since
+`cli.py risk-check` is already the non-overridable gate). If Robinhood
+renames or changes the shape of any of these, update
 `.claude/skills/robinhood-trading/SKILL.md` /
-`.claude/skills/robinhood-stop-loss-sweep/SKILL.md` text.
+`.claude/skills/robinhood-stop-loss-sweep/SKILL.md` to match.
 
 **3. Confirm you're in paper mode**
 
@@ -75,6 +80,26 @@ Both skills print a plain-English summary of what they did (or didn't
 do, and why) at the end — that's what you should actually read each day.
 Full skill text: `.claude/skills/robinhood-trading/SKILL.md` and
 `.claude/skills/robinhood-stop-loss-sweep/SKILL.md`.
+
+### Automating the cadence
+
+Right now you type `/robinhood-trading` and `/robinhood-stop-loss-sweep`
+yourself at the right times. To have Claude Code fire them on a
+schedule instead of by hand:
+
+- The **`schedule`** skill sets up a cron-based cloud agent — the closest
+  fit for "run `/robinhood-trading` every trading day after close" and
+  "run `/robinhood-stop-loss-sweep` every trading day at midday," each on
+  its own recurring cadence.
+- The **`/loop`** command re-runs a prompt or slash command on an
+  interval within a single session (e.g. `/loop 30m
+  /robinhood-stop-loss-sweep`) — lighter-weight, but only lasts as long
+  as that session stays open, so it suits a supervised trial run more
+  than unattended production use.
+
+Neither is wired up yet — this is still a manual, one-invocation-at-a-time
+setup. Worth doing only once you've watched a few manual cycles in paper
+mode and trust the timing.
 
 ## Backtesting against historical data
 
@@ -225,12 +250,15 @@ history, not something the repo tracks:
 ## Current status
 
 - Core engine, universe ranking, both skills, and backtesting are built
-  and tested (`pytest` — currently 122 tests, all local/network-free
+  and tested (`pytest` — currently 233 tests, all local/network-free
   except the live Wikipedia/yfinance-touching classes in
   `universe_client.py`, which are verified manually rather than by
   automated test).
-- **Not yet done:** connecting the Robinhood MCP server (step 2 above —
-  you do this), a first manual paper-mode run to validate the whole loop
-  end to end, and scheduled/automated invocation (both skills are
-  manual-only for now). See `docs/superpowers/plans/` for what's
-  deliberately deferred and why.
+- Robinhood's Agentic Trading MCP is connected, and both skills are
+  wired to its confirmed tool names for account resolution, quotes/
+  historicals, and live-mode order placement/fill-confirmation (see
+  "Connect Robinhood's Agentic Trading MCP server" above).
+- **Not yet done:** a first manual paper-mode run to validate the whole
+  loop end to end, and scheduled/automated invocation (see "Automating
+  the cadence" above — both skills are still manual-only). See
+  `docs/superpowers/plans/` for what's deliberately deferred and why.
