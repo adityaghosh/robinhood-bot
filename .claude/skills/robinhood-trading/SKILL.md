@@ -55,27 +55,69 @@ fine, this call is only to learn:
 
 ## Step 2 — Get the ranked universe
 
-```
-python -m robinhood_bot.cli universe
-```
+Candidates come from a saved Robinhood scan (`scan_id`:
+`2447fab8-9697-44b6-8d3f-78606d0f1e38`) rather than an S&P 500/Nasdaq-100
+membership list — a deliberate shift from "large, well-established,
+ranked by volatility" to "large, liquid, ranked by momentum + RSI, gated
+by revenue growth." See
+`docs/superpowers/specs/2026-07-21-scan-based-universe-design.md` for the
+full rationale.
 
-This uses a weekly-cached membership list by default (fast). Only pass
-`--refresh` if explicitly asked to force a refresh. Each candidate's
-`sector` field (its GICS *industry* — e.g. "Semiconductors" or "Computer
-Hardware", not the broader GICS sector — or `null` for the two leveraged
-funds) is needed later in Step 7 when gating a BUY — no separate lookup
-is required. Each candidate also carries `rsi` (14-day Relative Strength
-Index), `ma_trend_bullish` (whether the 5-day moving average is
-currently above the 20-day moving average, or `null` if there isn't
-enough history yet), and `golden_cross_bullish` (the same check on the
-50-day vs 200-day moving average — a longer-horizon trend regime read,
-`null` if there isn't 200 days of history yet) — all three also needed
-in Step 7.
+1. Call `run_scan` with the scan above. This is real-time data, not
+   cached — call it fresh every cycle. Each returned row has a top-level
+   `ticker` and a `columns` map keyed by display name; build `scan_rows`
+   for the next step from `columns['Market cap']` → `market_cap`,
+   `columns['% Change']` → `pct_change`, `columns['RSI']` → `rsi` (all
+   three come back as strings — parse to float), and `ticker` (or
+   `columns['Symbol']`) → `symbol`.
+2. `python -m robinhood_bot.cli universe rank --scan-rows-json "<scan_rows
+   from step 1, as a JSON array of {symbol, market_cap, pct_change,
+   rsi}>"` — returns the full result set sorted descending by
+   `combined_rank` (a percentile-rank average of `pct_change` and `rsi`,
+   computed in Python, not by hand).
+3. Walk that sorted list top-down. For each candidate, in batches of up to
+   20 symbols (the `get_financials` per-call limit), call `get_financials`
+   (`period: "quarterly"`, `limit: 5`) and compute YoY revenue growth:
+   `(revenue_this_quarter - revenue_same_quarter_last_year) /
+   revenue_same_quarter_last_year`. Drop any candidate with negative or flat
+   growth. If `get_financials` fails for a candidate, drop it too (never
+   assume a candidate passes a check that couldn't be verified) and keep
+   walking. Stop once 20 survivors are collected or the list runs out.
+4. Append the 2 leveraged funds (`TQQQ`, `UPRO`) unconditionally — they
+   never go through the scan or the growth filter. Give each a fixed
+   `combined_rank` of `0.5` and `sector: null`.
+5. For all ~22 finalists: call `get_equity_historicals` (`interval: "day"`,
+   `start_time` ~330 calendar days back — verified empirically that ~210
+   calendar days only yields ~142 trading days, short of the 200 the
+   golden-cross check needs; 330 calendar days yields ~220+, batched up to
+   10 symbols/call) to build a `symbol: [chronological closes]` object —
+   same pattern as Step 4 below uses for held positions. Also call
+   `get_equity_fundamentals` (batched up to 10/call) for each finalist's
+   `sector` (leveraged funds get `sector: null` directly, skip fetching
+   fundamentals for them).
+6. `python -m robinhood_bot.cli universe finalize --candidates-json "<22
+   finalists: symbol, category ('scanned' or 'leveraged'), market_cap,
+   pct_change, combined_rank, sector, rsi>" --closes-json "<historicals from
+   step 5>"` — attaches `ma_trend_bullish`/`golden_cross_bullish` per
+   candidate (`null` for any symbol whose historicals fetch failed or came
+   back with fewer than 200 closes — omit that symbol from the closes
+   object passed in, exactly like the held-position rule in Step 4 below).
+
+**If `run_scan` fails or returns zero rows:** skip new BUY consideration for
+this entire cycle and say so plainly in the Step 9 summary — there is no
+fallback candidate source. Held-position management (Step 6's discretionary
+calls, and the separate stop-loss-sweep skill) is unaffected, since neither
+depends on the candidate universe.
+
+Each candidate in the final list carries `sector` (needed in Step 7 when
+gating a BUY), `rsi` (14-day RSI from the scan), `ma_trend_bullish` (5-day
+vs. 20-day moving average), and `golden_cross_bullish` (50-day vs. 200-day)
+— all three needed in Step 7, exactly as before.
 
 ## Step 3 — Build today's research shortlist
 
 From the `candidates` list (sorted by `combined_rank`, descending), take:
-- The top 15 candidates whose `category` is `"sp500"` or `"nasdaq100"`.
+- The top 15 candidates whose `category` is `"scanned"`.
 - All candidates whose `category` is `"leveraged"` (there are only 2 —
   TQQQ, UPRO, both broad-market index funds, no leveraged sector funds —
   so this just means include all of them).
@@ -95,9 +137,12 @@ Also, for every symbol in Step 1's `active_positions` and
 `long_hold_positions` (already a subset of this shortlist per Step 3),
 fetch daily closes via `get_equity_historicals` — `symbols` (up to 10 per
 call, batch into multiple calls if more than 10 symbols are held),
-`interval: "day"`, `start_time` set to ~210 calendar days back from today
-as an RFC3339 UTC timestamp (e.g. `2026-01-01T00:00:00Z`; `end_time` can
-be omitted, it defaults to now) — and build a JSON object of `symbol:
+`interval: "day"`, `start_time` set to ~330 calendar days back from today
+(verified empirically that ~210 calendar days only yields ~142 trading
+days, short of the 200 the golden-cross check needs; 330 calendar days
+yields ~220+) as an RFC3339 UTC timestamp (e.g. `2026-01-01T00:00:00Z`;
+`end_time` can be omitted, it defaults to now) — and build a JSON object
+of `symbol:
 [chronological closing prices, oldest first]` from each bar's
 `close_price`. This replaces `cli.py`'s own (yfinance-based) lookup for
 these symbols' RSI/moving-average/golden-cross figures with the same
