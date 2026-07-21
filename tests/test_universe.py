@@ -3,12 +3,15 @@ from datetime import date
 import pytest
 
 from robinhood_bot.universe import (
+    Bar,
     Candidate,
     UniverseConfig,
+    average_true_range_pct,
     finalize_candidates,
     is_bullish_ma_trend,
     percentile_ranks,
     rank_by_scan,
+    realized_volatility,
     relative_strength_index,
 )
 
@@ -35,6 +38,42 @@ def test_candidate_fields():
     assert candidate.symbol == "AAPL"
     assert candidate.combined_rank == 0.9
     assert candidate.sector == "Technology"
+
+
+def test_bar_fields():
+    bar = Bar(high=101.0, low=99.0, close=100.0)
+    assert bar.high == 101.0
+    assert bar.low == 99.0
+    assert bar.close == 100.0
+
+
+def test_realized_volatility_of_constant_closes_is_zero():
+    assert realized_volatility([100.0, 100.0, 100.0, 100.0]) == 0.0
+
+
+def test_realized_volatility_too_few_points_is_zero():
+    assert realized_volatility([100.0]) == 0.0
+    assert realized_volatility([]) == 0.0
+
+
+def test_realized_volatility_known_value():
+    closes = [100.0, 102.0, 98.0, 101.0, 99.0]
+    assert realized_volatility(closes) == pytest.approx(0.5246239382982052)
+
+
+def test_average_true_range_pct_too_few_bars_is_zero():
+    assert average_true_range_pct([]) == 0.0
+    assert average_true_range_pct([Bar(101.0, 99.0, 100.0)]) == 0.0
+
+
+def test_average_true_range_pct_known_value():
+    bars = [
+        Bar(high=101.0, low=99.0, close=100.0),
+        Bar(high=103.0, low=100.0, close=102.0),
+        Bar(high=102.5, low=99.5, close=101.0),
+        Bar(high=104.0, low=100.5, close=103.0),
+    ]
+    assert average_true_range_pct(bars) == pytest.approx(0.030744336569579287)
 
 
 def test_relative_strength_index_insufficient_data_is_neutral():

@@ -30,6 +30,36 @@ class Candidate:
     golden_cross_bullish: bool | None = None
 
 
+@dataclass
+class Bar:
+    high: float
+    low: float
+    close: float
+
+
+def realized_volatility(closes: list[float]) -> float:
+    if len(closes) < 2:
+        return 0.0
+    returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    if len(returns) < 2:
+        return 0.0
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    return math.sqrt(variance) * math.sqrt(252)
+
+
+def average_true_range_pct(bars: list[Bar]) -> float:
+    if len(bars) < 2:
+        return 0.0
+    true_ranges = []
+    for i in range(1, len(bars)):
+        high, low, prev_close = bars[i].high, bars[i].low, bars[i - 1].close
+        true_ranges.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    atr = sum(true_ranges) / len(true_ranges)
+    last_close = bars[-1].close
+    return (atr / last_close) if last_close else 0.0
+
+
 def relative_strength_index(closes: list[float], window_days: int = 14) -> float:
     if len(closes) < window_days + 1:
         return 50.0
