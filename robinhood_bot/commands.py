@@ -18,7 +18,9 @@ def _position_value(position, prices: dict[str, float]) -> tuple[float, bool]:
     return position.qty * price, False
 
 
-def _position_summary(position, prices: dict[str, float]) -> dict:
+def _position_summary(
+    position, prices: dict[str, float], rsi_by_symbol: dict[str, float], ma_trend_by_symbol: dict[str, bool | None],
+) -> dict:
     value, stale = _position_value(position, prices)
     pnl_pct = None if stale else ((value - position.cost_basis) / position.cost_basis)
     return {
@@ -30,6 +32,8 @@ def _position_summary(position, prices: dict[str, float]) -> dict:
         "current_value": value,
         "unrealized_pnl_pct": pnl_pct,
         "stale_price": stale,
+        "rsi": rsi_by_symbol.get(position.symbol, 50.0),
+        "ma_trend_bullish": ma_trend_by_symbol.get(position.symbol),
     }
 
 
@@ -40,11 +44,15 @@ def cmd_state(
     today: date,
     trading_mode: str,
     cfg: RiskConfig,
+    rsi_by_symbol: dict[str, float] | None = None,
+    ma_trend_by_symbol: dict[str, bool | None] | None = None,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
+    rsi_by_symbol = rsi_by_symbol or {}
+    ma_trend_by_symbol = ma_trend_by_symbol or {}
 
-    active_out = [_position_summary(p, prices) for p in state.active_positions]
-    long_hold_out = [_position_summary(p, prices) for p in state.long_hold_positions]
+    active_out = [_position_summary(p, prices, rsi_by_symbol, ma_trend_by_symbol) for p in state.active_positions]
+    long_hold_out = [_position_summary(p, prices, rsi_by_symbol, ma_trend_by_symbol) for p in state.long_hold_positions]
     positions_value = sum(o["current_value"] for o in active_out + long_hold_out)
     total_equity = state.cash + positions_value
 
@@ -84,6 +92,8 @@ def cmd_risk_check(
     prices: dict[str, float],
     cfg: RiskConfig,
     sector: str | None = None,
+    rsi: float = 50.0,
+    ma_trend_bullish: bool | None = None,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
 
@@ -94,7 +104,7 @@ def cmd_risk_check(
     total_equity = state.cash + positions_value
 
     if action == "buy":
-        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector)
+        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector, rsi, ma_trend_bullish)
         return {
             "approved": decision.approved,
             "reason": decision.reason,
@@ -118,6 +128,8 @@ def cmd_record_fill(
     today: date,
     reason: str,
     sector: str | None = None,
+    rsi: float = 50.0,
+    ma_trend_bullish: bool | None = None,
 ) -> dict:
     state = ledger.load_state(ledger_path, starting_cash)
     roll_week_if_needed(state, today)
@@ -137,6 +149,8 @@ def cmd_record_fill(
                 entry_date=today,
                 status=PositionStatus.ACTIVE,
                 sector=sector,
+                rsi=rsi,
+                ma_trend_bullish=ma_trend_bullish,
             )
         )
     elif action == "sell":
