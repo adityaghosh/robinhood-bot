@@ -13,7 +13,10 @@ from .risk_engine import (
     ExitAction, RiskConfig, bonus_active_slots, evaluate_buy, evaluate_position,
     evaluate_profit_exits, max_new_position_value,
 )
-from .universe import average_true_range_pct, percentile_ranks, realized_volatility
+from .universe import (
+    average_true_range_pct, is_bullish_ma_trend, percentile_ranks, realized_volatility,
+    relative_strength_index,
+)
 
 
 @dataclass
@@ -34,10 +37,25 @@ def resolve_run_paths(run_id: str, base_dir: Path) -> RunPaths:
 
 def cmd_backtest_state(
     run_id: str, base_dir: Path, starting_cash: float, prices: dict[str, float], asof: date,
-    cfg: RiskConfig,
+    cfg: RiskConfig, store: HistoricalPriceStore,
+    rsi_window_days: int = 14, ma_short_window_days: int = 5, ma_long_window_days: int = 20,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
-    return commands.cmd_state(paths.ledger, starting_cash, prices, asof, trading_mode="backtest", cfg=cfg)
+    state = ledger.load_state(paths.ledger, starting_cash)
+    held_symbols = {p.symbol for p in state.active_positions + state.long_hold_positions}
+
+    lookback = max(rsi_window_days + 1, ma_long_window_days)
+    rsi_by_symbol: dict[str, float] = {}
+    ma_trend_by_symbol: dict[str, bool | None] = {}
+    for symbol in held_symbols:
+        closes = store.get_closes_window(symbol, asof, lookback)
+        rsi_by_symbol[symbol] = relative_strength_index(closes, rsi_window_days)
+        ma_trend_by_symbol[symbol] = is_bullish_ma_trend(closes, ma_short_window_days, ma_long_window_days)
+
+    return commands.cmd_state(
+        paths.ledger, starting_cash, prices, asof, trading_mode="backtest", cfg=cfg,
+        rsi_by_symbol=rsi_by_symbol, ma_trend_by_symbol=ma_trend_by_symbol,
+    )
 
 
 def cmd_backtest_quote(symbol: str, asof: date, store: HistoricalPriceStore) -> dict:
@@ -47,18 +65,23 @@ def cmd_backtest_quote(symbol: str, asof: date, store: HistoricalPriceStore) -> 
 def cmd_backtest_risk_check(
     run_id: str, base_dir: Path, starting_cash: float, action: str, symbol: str,
     proposed_value: float, prices: dict[str, float], cfg: RiskConfig, sector: str | None = None,
+    rsi: float = 50.0, ma_trend_bullish: bool | None = None,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
-    return commands.cmd_risk_check(paths.ledger, starting_cash, action, symbol, proposed_value, prices, cfg, sector)
+    return commands.cmd_risk_check(
+        paths.ledger, starting_cash, action, symbol, proposed_value, prices, cfg, sector, rsi, ma_trend_bullish,
+    )
 
 
 def cmd_backtest_record_fill(
     run_id: str, base_dir: Path, starting_cash: float, action: str, symbol: str,
     qty: float, price: float, asof: date, reason: str, sector: str | None = None,
+    rsi: float = 50.0, ma_trend_bullish: bool | None = None,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
     return commands.cmd_record_fill(
         paths.ledger, paths.trade_log, starting_cash, action, symbol, qty, price, asof, reason, sector,
+        rsi, ma_trend_bullish,
     )
 
 
@@ -151,6 +174,9 @@ def cmd_backtest_run(
     benchmark_symbol: str = "SPY",
     vol_window_days: int = 20,
     atr_window_days: int = 14,
+    rsi_window_days: int = 14,
+    ma_short_window_days: int = 5,
+    ma_long_window_days: int = 20,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
     trading_days = store.trading_days(benchmark_symbol, start, end)
@@ -243,7 +269,16 @@ def cmd_backtest_run(
                 max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
                 proposed_value = min(max_value, state.cash)
                 sector = candidate_sectors.get(symbol)
-                decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector)
+                # RSI/MA trend change daily (unlike sector, which is a
+                # permanent fact about a symbol) so they can't be
+                # precomputed once per run -- fetch fresh here, immediately
+                # before the buy decision, mirroring how `price` itself is
+                # fetched fresh per candidate per day just above.
+                indicator_lookback = max(rsi_window_days + 1, ma_long_window_days)
+                closes = store.get_closes_window(symbol, today, indicator_lookback)
+                rsi = relative_strength_index(closes, rsi_window_days)
+                ma_trend_bullish = is_bullish_ma_trend(closes, ma_short_window_days, ma_long_window_days)
+                decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector, rsi, ma_trend_bullish)
                 if not decision.approved:
                     continue
                 qty = math.floor(proposed_value / price)
@@ -252,7 +287,7 @@ def cmd_backtest_run(
 
                 commands.cmd_record_fill(
                     paths.ledger, paths.trade_log, starting_cash, "buy", symbol, qty, price, today,
-                    "backtest entry", sector,
+                    "backtest entry", sector, rsi, ma_trend_bullish,
                 )
                 state = ledger.load_state(paths.ledger, starting_cash)
                 held.add(symbol)

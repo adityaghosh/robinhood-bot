@@ -1,5 +1,5 @@
 import csv
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -21,12 +21,42 @@ def test_cmd_backtest_state_reads_isolated_ledger(tmp_path):
     paths = backtest_commands.resolve_run_paths("run1", tmp_path)
     ledger.save_state(paths.ledger, PortfolioState(cash=5_000.0))
 
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return []
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
     result = backtest_commands.cmd_backtest_state(
-        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5), cfg=RiskConfig(),
+        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5), cfg=RiskConfig(), store=store,
     )
 
     assert result["cash"] == 5_000.0
     assert result["trading_mode"] == "backtest"
+
+
+def test_cmd_backtest_state_includes_fresh_rsi_for_held_position(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=5_000.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 1, 1), PositionStatus.ACTIVE)],
+    ))
+
+    bars = [HistoricalBar(date(2026, 1, 1) + timedelta(days=i), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i) for i in range(25)]
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
+    result = backtest_commands.cmd_backtest_state(
+        "run1", tmp_path, starting_cash=0.0, prices={"AAPL": 124.0}, asof=date(2026, 1, 25),
+        cfg=RiskConfig(), store=store,
+    )
+
+    assert result["active_positions"][0]["rsi"] == pytest.approx(100.0)
+    assert result["active_positions"][0]["ma_trend_bullish"] is True
 
 
 def test_cmd_backtest_quote_returns_price_from_store(tmp_path):
@@ -481,6 +511,49 @@ def test_cmd_backtest_run_skips_same_sector_candidate_for_next_ranked(tmp_path):
     with paths.trade_log.open() as f:
         rows = list(csv.DictReader(f))
     assert [r["symbol"] for r in rows] == ["JPM"]
+
+
+def test_cmd_backtest_run_rejects_overbought_candidate_for_next_ranked(tmp_path):
+    # AAPL2 ranks first (its bars show a monotonic 25-day rise, giving both
+    # the highest volatility/ATR score AND an RSI of 100 -- deeply overbought)
+    # but must be REJECTED by the new RSI gate; JPM ranks second (flat/mild
+    # bars, neutral RSI) and should be the one actually bought instead. If
+    # the RSI gate weren't wired into this loop, AAPL2 (the top-ranked
+    # candidate) would be bought instead.
+    aapl2_bars = [
+        HistoricalBar(date(2025, 12, 15) + timedelta(days=i), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i)
+        for i in range(37)
+    ]
+    jpm_bars = [
+        HistoricalBar(date(2025, 12, 15) + timedelta(days=i), 150.0, 150.5, 149.5, 150.0 + (0.1 if i % 2 == 0 else -0.1))
+        for i in range(37)
+    ]
+    bars = {
+        "SPY": [HistoricalBar(date(2026, 1, 20), 400.0, 401.0, 399.0, 400.0)],
+        "AAPL2": aapl2_bars,
+        "JPM": jpm_bars,
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars.get(symbol, []) if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, stop_loss_pct=0.5, weekly_profit_goal=100_000.0,
+        max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
+        rsi_overbought_threshold=70.0,
+    )
+
+    backtest_commands.cmd_backtest_run(
+        "run_rsi", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 20), end=date(2026, 1, 20),
+        candidate_symbols=["AAPL2", "JPM"], candidate_sectors={}, store=store, cfg=cfg,
+        vol_window_days=2, atr_window_days=2,
+    )
+
+    paths = backtest_commands.resolve_run_paths("run_rsi", tmp_path)
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+    assert [p.symbol for p in final_state.active_positions] == ["JPM"]
 
 
 def test_cmd_backtest_run_fills_bonus_slot_from_prior_week_surplus(tmp_path):
