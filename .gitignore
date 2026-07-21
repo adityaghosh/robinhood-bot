@@ -6,3 +6,5 @@ data/*.json
 data/backtests/
 data/historical_price_cache/
 .pytest_cache/
+.claude/worktrees/
+.superpowers/
