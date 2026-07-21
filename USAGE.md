@@ -155,7 +155,7 @@ Defined in `robinhood_bot/risk_engine.py`, defaults in `RiskConfig`:
 | Grace period | 5 days | How long an underwater position waits before parking |
 | Max position size | 20% of equity | Ceiling on any single new position, scaled down as the long-hold bucket fills up (min 5%) |
 | Long-hold capital cap | 30% of equity | Utilization threshold that drives the position-size scaling above |
-| Monthly circuit breaker | 10% drawdown | Halts all new buys for the rest of the month if tripped |
+| Monthly circuit breaker | 5% drawdown | Halts all new buys for the rest of the month if tripped |
 
 A position that breaches its stop-loss isn't sold immediately — it gets
 a grace period to recover (`WAITING` status, still occupies an active

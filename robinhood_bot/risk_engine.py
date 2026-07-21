@@ -18,7 +18,7 @@ class RiskConfig:
     max_position_pct: float = 0.20
     min_position_pct: float = 0.05
     long_hold_capital_cap_pct: float = 0.30
-    monthly_circuit_breaker_pct: float = 0.10
+    monthly_circuit_breaker_pct: float = 0.05
     rsi_overbought_threshold: float = 70.0
 
 
