@@ -145,7 +145,7 @@ def test_evaluate_buy_rejects_when_symbol_already_held():
     state = PortfolioState(cash=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
     ])
-    decision = evaluate_buy(state, "AAPL", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "AAPL", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is False
     assert "already held" in decision.reason
 
@@ -153,7 +153,7 @@ def test_evaluate_buy_rejects_when_symbol_already_held():
 def test_evaluate_buy_rejects_when_circuit_breaker_tripped():
     cfg = RiskConfig(monthly_circuit_breaker_pct=0.10)
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=8_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=8_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is False
     assert "circuit breaker" in decision.reason
 
@@ -163,7 +163,7 @@ def test_evaluate_buy_rejects_when_no_active_slots():
     state = PortfolioState(cash=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
     ])
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is False
     assert "slots" in decision.reason
 
@@ -171,7 +171,7 @@ def test_evaluate_buy_rejects_when_no_active_slots():
 def test_evaluate_buy_rejects_when_oversized():
     cfg = RiskConfig(max_position_pct=0.20)
     state = PortfolioState(cash=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=5_000.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=5_000.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is False
     assert "exceeds max position size" in decision.reason
 
@@ -179,7 +179,7 @@ def test_evaluate_buy_rejects_when_oversized():
 def test_evaluate_buy_rejects_when_insufficient_cash():
     cfg = RiskConfig(max_position_pct=0.50)
     state = PortfolioState(cash=1_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=2_000.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=2_000.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is False
     assert "insufficient cash" in decision.reason
 
@@ -187,7 +187,7 @@ def test_evaluate_buy_rejects_when_insufficient_cash():
 def test_evaluate_buy_approves_happy_path():
     cfg = RiskConfig(max_position_pct=0.20)
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is True
     assert decision.max_position_value == 2_000.0
 
@@ -197,7 +197,7 @@ def test_evaluate_buy_rejects_when_sector_concentration_limit_reached():
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
     ])
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector="Technology")
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector="Technology", rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is False
     assert "sector concentration" in decision.reason
 
@@ -207,7 +207,7 @@ def test_evaluate_buy_approves_when_different_sector_held():
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
     ])
-    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials")
+    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials", rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is True
 
 
@@ -216,7 +216,7 @@ def test_evaluate_buy_approves_when_sector_none_bypasses_concentration_check():
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
         Position("TQQQ", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector=None)
     ])
-    decision = evaluate_buy(state, "UPRO", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "UPRO", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is True
 
 
@@ -231,7 +231,7 @@ def test_evaluate_buy_approves_when_bonus_slot_from_prior_week_surplus_allows_it
             Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
         ],
     )
-    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials")
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials", rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is True
 
 
@@ -247,9 +247,51 @@ def test_evaluate_buy_rejects_when_even_boosted_effective_cap_is_reached():
             Position("MSFT", 5, 300.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Financials"),
         ],
     )
-    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Energy")
+    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Energy", rsi=50.0, ma_trend_bullish=None)
     assert decision.approved is False
     assert "no active slots available" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_overbought():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=75.0, ma_trend_bullish=True,
+    )
+    assert decision.approved is False
+    assert "overbought" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_no_confirmed_uptrend():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=50.0, ma_trend_bullish=False,
+    )
+    assert decision.approved is False
+    assert "uptrend" in decision.reason
+
+
+def test_evaluate_buy_approves_when_ma_trend_unknown_bypasses_check():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=50.0, ma_trend_bullish=None,
+    )
+    assert decision.approved is True
+
+
+def test_evaluate_buy_approves_at_exact_rsi_threshold():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=70.0, ma_trend_bullish=True,
+    )
+    assert decision.approved is True
 
 
 def test_evaluate_sell_approves_active_holding():

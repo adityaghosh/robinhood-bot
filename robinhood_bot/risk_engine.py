@@ -19,6 +19,7 @@ class RiskConfig:
     min_position_pct: float = 0.05
     long_hold_capital_cap_pct: float = 0.30
     monthly_circuit_breaker_pct: float = 0.10
+    rsi_overbought_threshold: float = 70.0
 
 
 class ExitAction(str, Enum):
@@ -116,6 +117,8 @@ def evaluate_buy(
     total_equity: float,
     cfg: RiskConfig,
     sector: str | None,
+    rsi: float,
+    ma_trend_bullish: bool | None,
 ) -> BuyDecision:
     max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
 
@@ -130,6 +133,16 @@ def evaluate_buy(
                 f"sector concentration: already at the {cfg.max_positions_per_sector}-position limit for {sector}",
                 max_value,
             )
+
+    if rsi > cfg.rsi_overbought_threshold:
+        return BuyDecision(
+            False,
+            f"overbought: RSI {rsi:.1f} exceeds {cfg.rsi_overbought_threshold:.0f}",
+            max_value,
+        )
+
+    if ma_trend_bullish is False:
+        return BuyDecision(False, "no confirmed short-term uptrend (short MA at or below long MA)", max_value)
 
     if circuit_breaker_tripped(state.month_start_equity, total_equity, cfg):
         return BuyDecision(False, "monthly circuit breaker tripped", max_value)
