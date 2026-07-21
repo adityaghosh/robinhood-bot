@@ -88,12 +88,18 @@ created via `create_scan` and configured via `update_scan_filters`:
 - `FILTER_TYPE_AVERAGE_VOLUME > 1,000,000` (`length`/`interval` tuned to
   a ~10-day average) — a liquidity floor so thin-volume large caps don't
   surface
-- `FILTER_TYPE_PERCENT_CHANGE_FROM_CLOSE` and `FILTER_TYPE_RSI` (length
-  14, interval `1d`) added across their full valid range — not
-  restrictive filters, just there to surface `% Change` and `RSI` as
-  result columns
-- `FILTER_TYPE_SECTOR` present as a column the same way, for the
-  concentration-limit check downstream
+- `FILTER_TYPE_PERCENT_CHANGE_FROM_CLOSE` (interval `1d`, plot `Close`)
+  and `FILTER_TYPE_RSI` (length 14, interval `1d`) added across their
+  full valid range — not restrictive filters, just there to surface
+  `% Change` and `RSI` as result columns
+
+`FILTER_TYPE_SECTOR` is deliberately **not** part of the scan: it only
+supports `=`/`ANY_OF` predicates, so there's no way to add it
+unrestricted the way the numeric filters above can be. Sector for the
+concentration-limit check instead comes from `get_equity_fundamentals`
+(confirmed to return a `sector` field) for the ~22 finalists, batched up
+to 10 symbols/call — cheap, since it's fetched at the same late stage as
+`get_equity_historicals` for those same finalists.
 
 The resulting `scan_id` is saved as a config value (not re-created each
 run). `run_scan` results are always real-time ("not cached" per the
@@ -122,9 +128,11 @@ maintain, unlike the two-tier system this replaces.
    inclusion is a strategic given, not an earned rank.
 5. For all ~22 finalists: `get_equity_historicals` (same pattern already
    used for held positions in Step 4) → build a `symbol: [closes]`
-   object.
-6. `cli.py universe finalize --candidates-json '<22 finalists>'
-   --closes-json '<historicals>'` — Python attaches
+   object; and `get_equity_fundamentals` (batched up to 10/call) → each
+   finalist's `sector`. The 2 leveraged funds get `sector: null`, same
+   as today.
+6. `cli.py universe finalize --candidates-json '<22 finalists, now
+   including sector>' --closes-json '<historicals>'` — Python attaches
    `ma_trend_bullish`/`golden_cross_bullish` via the existing
    `is_bullish_ma_trend`, returns the final ranked `Candidate` list in
    the same shape Steps 3-7 already expect.
