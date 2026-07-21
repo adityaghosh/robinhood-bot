@@ -19,6 +19,8 @@ def _position_to_dict(position: Position) -> dict:
             position.underwater_since.isoformat() if position.underwater_since else None
         ),
         "sector": position.sector,
+        "rsi": position.rsi,
+        "ma_trend_bullish": position.ma_trend_bullish,
     }
 
 
@@ -33,6 +35,8 @@ def _position_from_dict(data: dict) -> Position:
             date.fromisoformat(data["underwater_since"]) if data["underwater_since"] else None
         ),
         sector=data.get("sector"),
+        rsi=data.get("rsi"),
+        ma_trend_bullish=data.get("ma_trend_bullish"),
     )
 
 

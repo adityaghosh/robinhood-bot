@@ -20,6 +20,8 @@ class Position:
     status: PositionStatus
     underwater_since: date | None = None
     sector: str | None = None
+    rsi: float | None = None
+    ma_trend_bullish: bool | None = None
 
     @property
     def cost_basis(self) -> float:
