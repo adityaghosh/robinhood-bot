@@ -203,8 +203,8 @@ For each symbol currently **held** (active or long-hold):
   this step and will catch what they're each designed to catch.
 
 For each shortlisted symbol **not currently held**:
-- Consider its `combined_rank` (volatility), `realized_vol`/`atr_pct`,
-  and recent price action from the fresh quote.
+- Consider its `combined_rank` (a momentum blend of `pct_change` and
+  `rsi`), and recent price action from the fresh quote.
 - Decide: propose **BUY** (a new position) or skip it.
 - You can open at most as many new positions as there are free slots
   out of the active cap (`effective_max_active_positions -
@@ -379,13 +379,13 @@ equivalents, all parameterized by `--run RUN_ID --asof <simulated date>`:
   state --run RUN_ID --asof <simulated date> --prices-json "{}"`. Note that
   `trading_mode` here is always `"backtest"` — there is no live-order-
   placement branch anywhere in this mode; every trade is simulated.
-- **Step 2 (universe):** skipped — `backtest run`'s candidate list (today's
-  live universe, applied retroactively) isn't available per-command in
-  this mode. Instead, shortlist from whatever symbols you already know are
-  liquid, well-known equities (e.g. run `cli.py universe` once, live,
-  before starting the backtest, and reuse that fixed candidate list for
-  every simulated day — mirroring exactly what `backtest run`'s
-  deterministic mode does internally).
+- **Step 2 (universe):** skipped — this LLM-driven backtest mode has no
+  per-simulated-day candidate list of its own. Instead, run Step 2's
+  live sequence (`run_scan` → `cli.py universe rank` → growth filter →
+  `cli.py universe finalize`) once, before starting the backtest, and
+  reuse that fixed candidate list for every simulated day — mirroring
+  what `backtest run`'s deterministic mode does with its own required
+  `--candidates-json` argument.
 - **Step 4 (fresh quotes):** `python -m robinhood_bot.cli backtest quote
   SYMBOL --asof <simulated date>` for each shortlisted symbol, in place of
   the Robinhood MCP quote tool. If `"price"` comes back `null`, skip that

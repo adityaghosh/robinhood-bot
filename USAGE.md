@@ -1,9 +1,10 @@
 # Using robinhood-bot
 
 An LLM-assisted short-term trading bot for a curated universe of
-well-established stocks (top ~100 S&P 500 + top ~20 Nasdaq-100 by market
-cap) plus leveraged broad-market index funds (TQQQ, UPRO) — no leveraged
-sector funds — pursuing a monthly return target. Claude Code is the
+large-cap, liquid stocks (sourced from a saved Robinhood scan, ranked by
+% change and RSI, gated by revenue growth) plus leveraged broad-market
+index funds (TQQQ, UPRO) — no leveraged sector funds — pursuing a
+monthly return target. Claude Code is the
 decision-making agent; Python
 enforces every hard risk limit and Claude cannot override a rejected
 trade. Starts in paper mode (simulated fills against real, live prices)
@@ -123,21 +124,25 @@ the first, cold-cache run for a given date range and symbol set — see
 python -m robinhood_bot.cli backtest trading-days --start 2026-01-01 --end 2026-06-30
 
 # Run it. Each --run id gets its own isolated ledger, so you can run
-# multiple backtests side by side without them interfering.
-python -m robinhood_bot.cli backtest run --run jan-jun-2026 --start 2026-01-01 --end 2026-06-30
+# multiple backtests side by side without them interfering. --candidates-json
+# is required -- a JSON array of {"symbol": ..., "sector": ... or null} -- the
+# command no longer fetches a candidate list itself (see below).
+python -m robinhood_bot.cli backtest run --run jan-jun-2026 --start 2026-01-01 --end 2026-06-30 --candidates-json '[{"symbol": "AAPL", "sector": "Electronic Technology"}, {"symbol": "TQQQ", "sector": null}]'
 
 # Summarize: total return, max drawdown, win/loss count, and a
 # buy-and-hold-SPY benchmark for the same window.
 python -m robinhood_bot.cli backtest report --run jan-jun-2026
 ```
 
-The deterministic run always trades within *today's* live candidate
-universe (top S&P 500 + Nasdaq-100 + leveraged funds), applied
+`backtest run` takes whatever candidate list you pass it and applies it
 retroactively across the whole historical window — not the universe as
 it actually existed on each past date. This is a known, accepted
 simplification (survivorship bias), not a bug; see
 `docs/superpowers/specs/2026-07-19-backtesting-design.md` for the full
-rationale and other non-goals.
+rationale and other non-goals. In practice that list is usually a
+snapshot of today's live candidates — e.g. run the scan described under
+"Where your data lives" once and reuse its output — but the command
+itself is now network-free and has no opinion on how you produced it.
 
 **LLM-driven backtest** — runs the actual daily-cycle skill's research
 and decision logic (the same judgment `/robinhood-trading` uses live),
