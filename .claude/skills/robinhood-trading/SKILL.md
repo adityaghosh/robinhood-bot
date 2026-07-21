@@ -53,7 +53,10 @@ This uses a weekly-cached membership list by default (fast). Only pass
 `sector` field (its GICS *industry* — e.g. "Semiconductors" or "Computer
 Hardware", not the broader GICS sector — or `null` for the two leveraged
 funds) is needed later in Step 7 when gating a BUY — no separate lookup
-is required.
+is required. Each candidate also carries `rsi` (14-day Relative Strength
+Index) and `ma_trend_bullish` (whether the 5-day moving average is
+currently above the 20-day moving average, or `null` if there isn't
+enough history yet) — both also needed in Step 7.
 
 ## Step 3 — Build today's research shortlist
 
@@ -92,12 +95,19 @@ fully mechanical now, driven by the weekly profit goal
 skill). Your discretion in this step is for two things instead:
 
 For each symbol currently **held** (active or long-hold):
-- Note its lifecycle `status` (`ACTIVE`, `WAITING`, `LONG_HOLD`) and
-  `unrealized_pnl_pct` from Step 5.
-- Consider a **discretionary early SELL** if a position has moved
-  sharply against you — you don't have to wait out the full grace
-  period if the decline looks decisive rather than noisy (see this
-  session's backtest transcripts for worked examples of both calls).
+- Note its lifecycle `status` (`ACTIVE`, `WAITING`, `LONG_HOLD`),
+  `unrealized_pnl_pct`, `rsi`, and `ma_trend_bullish` from Step 5.
+- **ACTIVE/WAITING positions:** consider a discretionary early SELL if
+  a position has moved sharply against you (you don't have to wait out
+  the full grace period if the decline looks decisive rather than
+  noisy — see this session's backtest transcripts for worked examples
+  of both calls), or if RSI is deep in overbought territory, or if
+  `ma_trend_bullish` has turned `false`.
+- **LONG_HOLD positions:** these have no guaranteed recovery, so treat
+  `ma_trend_bullish` turning `true` (a bounce back above the 20-day
+  average) as a signal to consider **selling into the bounce** rather
+  than holding out for a full recovery that may not come — this is
+  often the best exit opportunity a long-hold position gets.
 - Otherwise, propose **HOLD** — the mechanical stop-loss/grace-period
   machinery and the weekly profit-goal sweep both run independently of
   this step and will catch what they're each designed to catch.
@@ -122,7 +132,7 @@ run immediately before that specific buy executes, reflecting any buys
 already executed earlier in this same cycle.
 
 ```
-python -m robinhood_bot.cli risk-check buy SYMBOL --value <proposed dollar amount> --sector <symbol's sector from Step 2/Step 3 candidate data> --prices-json "<fresh quotes>"
+python -m robinhood_bot.cli risk-check buy SYMBOL --value <proposed dollar amount> --sector <symbol's sector from Step 2/Step 3 candidate data> --rsi <symbol's rsi from Step 2/Step 3 candidate data> --ma-bullish/--no-ma-bullish (omit if ma_trend_bullish is null) --prices-json "<fresh quotes>"
 python -m robinhood_bot.cli risk-check sell SYMBOL --prices-json "<fresh quotes>"
 ```
 
@@ -133,6 +143,13 @@ python -m robinhood_bot.cli risk-check sell SYMBOL --prices-json "<fresh quotes>
   `--sector` (default limit: 1 position per sector) — the rejection
   `"reason"` names the sector; treat it exactly like any other
   rejection, never override it.
+- A BUY is also rejected if the candidate's RSI is overbought (default
+  threshold: 70), or if `ma_trend_bullish` is explicitly `false` (no
+  confirmed short-term uptrend) — always pass `--rsi` from the
+  candidate's data, and pass `--ma-bullish`/`--no-ma-bullish` only when
+  `ma_trend_bullish` is `true`/`false`; omit the flag entirely when it's
+  `null` (not enough history to judge — the check is skipped rather
+  than blocking on missing data).
 - For an approved BUY, `"max_position_value"` is the ceiling. Compute a
   whole-share quantity: `floor(min(proposed_value, max_position_value) /
   fresh_quote_price)`. You may propose fewer shares than the ceiling
@@ -143,7 +160,7 @@ python -m robinhood_bot.cli risk-check sell SYMBOL --prices-json "<fresh quotes>
 **If `trading_mode` is `"paper"`:**
 
 ```
-python -m robinhood_bot.cli record-fill buy SYMBOL --qty <n> --price <fresh quote price> --sector <same sector passed to Step 7's risk-check> --reason "<why>"
+python -m robinhood_bot.cli record-fill buy SYMBOL --qty <n> --price <fresh quote price> --sector <same sector passed to Step 7's risk-check> --rsi <same rsi passed to Step 7's risk-check> --ma-bullish/--no-ma-bullish (matching Step 7's risk-check, omit if null) --reason "<why>"
 python -m robinhood_bot.cli record-fill sell SYMBOL --qty <held qty> --price <fresh quote price> --reason "<why>"
 ```
 
@@ -158,7 +175,7 @@ Never call the live order-placement MCP tool in this mode.
    pre-trade quote, even if they're close.
 
 ```
-python -m robinhood_bot.cli record-fill buy SYMBOL --qty <actual filled qty> --price <actual fill price> --sector <same sector passed to Step 7's risk-check> --reason "<why>"
+python -m robinhood_bot.cli record-fill buy SYMBOL --qty <actual filled qty> --price <actual fill price> --sector <same sector passed to Step 7's risk-check> --rsi <same rsi passed to Step 7's risk-check> --ma-bullish/--no-ma-bullish (matching Step 7's risk-check, omit if null) --reason "<why>"
 ```
 
 If order placement fails: do not call `record-fill`. Leave the ledger
@@ -227,11 +244,14 @@ equivalents, all parameterized by `--run RUN_ID --asof <simulated date>`:
 - **Steps 7-8 (gate and execute):** `python -m robinhood_bot.cli backtest
   risk-check {buy|sell} SYMBOL --run RUN_ID --asof <simulated date>
   --value <proposed dollar amount, for buys> --sector <symbol's sector,
-  for buys> --prices-json "<quotes>"`, then on approval, `python -m
-  robinhood_bot.cli backtest record-fill {buy|sell} SYMBOL --run RUN_ID
-  --asof <simulated date> --qty <n> --price <quote price> --sector
-  <same sector, for buys> --reason "<why>"`. There is no
-  live-order-placement call in this mode, ever.
+  for buys> --rsi <symbol's rsi, for buys> --ma-bullish/--no-ma-bullish
+  (for buys, matching ma_trend_bullish, omit if null) --prices-json
+  "<quotes>"`, then on approval, `python -m robinhood_bot.cli backtest
+  record-fill {buy|sell} SYMBOL --run RUN_ID --asof <simulated date>
+  --qty <n> --price <quote price> --sector <same sector, for buys>
+  --rsi <same rsi, for buys> --ma-bullish/--no-ma-bullish (matching, for
+  buys) --reason "<why>"`. There is no live-order-placement call in this
+  mode, ever.
 - **After all of today's decisions are executed:** `python -m
   robinhood_bot.cli backtest mark-day --run RUN_ID --asof <simulated
   date> --prices-json "<quotes from Step 4>"`. This records today's
