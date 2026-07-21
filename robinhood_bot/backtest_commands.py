@@ -278,7 +278,7 @@ def cmd_backtest_run(
                 closes = store.get_closes_window(symbol, today, indicator_lookback)
                 rsi = relative_strength_index(closes, rsi_window_days)
                 ma_trend_bullish = is_bullish_ma_trend(closes, ma_short_window_days, ma_long_window_days)
-                decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector, rsi, ma_trend_bullish)
+                decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector, rsi, ma_trend_bullish, golden_cross_bullish=None)
                 if not decision.approved:
                     continue
                 qty = math.floor(proposed_value / price)

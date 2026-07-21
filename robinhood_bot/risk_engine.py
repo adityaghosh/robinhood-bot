@@ -119,6 +119,7 @@ def evaluate_buy(
     sector: str | None,
     rsi: float,
     ma_trend_bullish: bool | None,
+    golden_cross_bullish: bool | None,
 ) -> BuyDecision:
     max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
 
@@ -143,6 +144,13 @@ def evaluate_buy(
 
     if ma_trend_bullish is False:
         return BuyDecision(False, "no confirmed short-term uptrend (short MA at or below long MA)", max_value)
+
+    if golden_cross_bullish is False:
+        return BuyDecision(
+            False,
+            "long-term trend bearish (50-day SMA at or below 200-day SMA / death cross)",
+            max_value,
+        )
 
     if circuit_breaker_tripped(state.month_start_equity, total_equity, cfg):
         return BuyDecision(False, "monthly circuit breaker tripped", max_value)

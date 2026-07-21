@@ -104,7 +104,7 @@ def cmd_risk_check(
     total_equity = state.cash + positions_value
 
     if action == "buy":
-        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector, rsi, ma_trend_bullish)
+        decision = evaluate_buy(state, symbol, proposed_value, total_equity, cfg, sector, rsi, ma_trend_bullish, golden_cross_bullish=None)
         return {
             "approved": decision.approved,
             "reason": decision.reason,
