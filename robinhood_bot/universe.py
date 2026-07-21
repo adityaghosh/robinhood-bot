@@ -179,11 +179,14 @@ def average_true_range_pct(bars: list[Bar]) -> float:
 def relative_strength_index(closes: list[float], window_days: int = 14) -> float:
     if len(closes) < window_days + 1:
         return 50.0
-    changes = [closes[i] - closes[i - 1] for i in range(len(closes) - window_days, len(closes))]
-    gains = [c for c in changes if c > 0]
-    losses = [-c for c in changes if c < 0]
-    avg_gain = sum(gains) / window_days
-    avg_loss = sum(losses) / window_days
+    changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [max(c, 0.0) for c in changes]
+    losses = [max(-c, 0.0) for c in changes]
+    avg_gain = sum(gains[:window_days]) / window_days
+    avg_loss = sum(losses[:window_days]) / window_days
+    for i in range(window_days, len(changes)):
+        avg_gain = (avg_gain * (window_days - 1) + gains[i]) / window_days
+        avg_loss = (avg_loss * (window_days - 1) + losses[i]) / window_days
     if avg_loss == 0:
         return 100.0 if avg_gain > 0 else 50.0
     rs = avg_gain / avg_loss

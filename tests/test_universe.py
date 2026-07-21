@@ -179,6 +179,28 @@ def test_relative_strength_index_mixed_known_value():
     assert relative_strength_index(closes) == pytest.approx(66.666666, rel=1e-4)
 
 
+def test_relative_strength_index_uses_wilder_smoothing_over_full_history():
+    # 40 closes (well beyond window_days+1=15) so Wilder's recurrence rolls
+    # the seeded average forward across the extra changes -- this is the
+    # behavior a naive "average of the trailing window_days changes only"
+    # implementation cannot reproduce. Expected values below were computed by
+    # running both formulas in a scratch script (not derived by hand) against
+    # this exact closes list:
+    #   old (simple trailing-average) RSI = 61.53846153846153
+    #   new (Wilder-smoothed)         RSI = 64.0932449136437
+    closes = [
+        103.0, 105.0, 107.0, 110.0, 109.0, 111.0, 113.0, 115.0, 118.0, 120.0,
+        123.0, 126.0, 125.5, 127.5, 127.0, 128.5, 130.5, 132.5, 134.5, 136.5,
+        138.5, 138.0, 137.5, 139.5, 139.0, 141.0, 144.0, 147.0, 150.0, 149.5,
+        151.0, 153.0, 154.5, 154.0, 153.0, 151.0, 149.0, 151.0, 149.0, 147.0,
+    ]
+
+    result = relative_strength_index(closes)
+
+    assert result == pytest.approx(64.0932449136437, rel=1e-9)
+    assert result != pytest.approx(61.53846153846153, rel=1e-4)
+
+
 from robinhood_bot.universe import is_bullish_ma_trend
 
 

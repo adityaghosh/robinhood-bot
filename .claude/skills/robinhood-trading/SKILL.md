@@ -15,10 +15,10 @@ All `cli.py` commands below assume the project's virtualenv is active
 (`.venv\Scripts\activate` on Windows).
 
 On Windows PowerShell, native commands strip inner double quotes, so any
-non-empty `--prices-json` value needs its inner quotes backslash-escaped,
-e.g. `--prices-json '{\"AAPL\": 189.50, \"MSFT\": 310.25}'`. The empty
-`--prices-json "{}"` used in Step 1 has no inner quotes to strip, so it
-works as-is.
+non-empty `--prices-json` or `--closes-json` value needs its inner quotes
+backslash-escaped, e.g. `--prices-json '{\"AAPL\": 189.50, \"MSFT\":
+310.25}'`. The empty `--prices-json "{}"` used in Step 1 has no inner
+quotes to strip, so it works as-is.
 
 ## Step 1 — Read mode & current holdings
 
@@ -91,14 +91,34 @@ current price for every symbol in the Step 3 shortlist.
 **If a quote fails for any symbol: skip that symbol for this cycle.**
 Never fabricate, estimate, or reuse a stale price in its place.
 
+Also, for every symbol in Step 1's `active_positions` and
+`long_hold_positions` (already a subset of this shortlist per Step 3),
+fetch daily closes via `get_equity_historicals` (`interval: "day"`,
+`start_time` ~210 calendar days back, up to 10 symbols per call — batch
+into multiple calls if more than 10 symbols are held) and build a JSON
+object of `symbol: [chronological closing prices, oldest first]` from
+each bar's `close_price`. This replaces `cli.py`'s own (yfinance-based)
+lookup for these symbols' RSI/moving-average/golden-cross figures with
+the same source the fresh quotes just came from.
+
+**If historicals fail for a held symbol, or come back with fewer than
+200 closes: omit that symbol from the closes object.** `cli.py` falls
+back to its own lookup only when the whole `--closes-json` argument is
+empty, not per-symbol, so leaving out just the affected symbol means it
+keeps this cycle's `rsi`/`ma_trend_bullish`/`golden_cross_bullish` at
+their neutral defaults instead of silently using stale figures.
+
 ## Step 5 — Refresh state with real prices
 
 ```
-python -m robinhood_bot.cli state --prices-json "<fresh quotes from Step 4, as a JSON object of symbol: price>"
+python -m robinhood_bot.cli state --prices-json "<fresh quotes from Step 4, as a JSON object of symbol: price>" --closes-json "<closes object from Step 4, as a JSON object of symbol: [closes]>"
 ```
 
 Now `total_equity`, `unrealized_pnl_pct`, and `monthly_return_pct` are
-accurate, not placeholder values.
+accurate, not placeholder values, and held positions' `rsi`,
+`ma_trend_bullish`, and `golden_cross_bullish` (used in Step 6) come from
+the same fresh data source as the quotes rather than a separate yfinance
+lookup.
 
 ## Step 6 — Research and decide, per shortlisted symbol
 
@@ -210,8 +230,9 @@ retry silently or guess at what happened.
 
 ## Step 9 — Summarize
 
-Run `python -m robinhood_bot.cli state --prices-json "<fresh quotes>"`
-one more time and report to the user:
+Run `python -m robinhood_bot.cli state --prices-json "<fresh quotes>"
+--closes-json "<closes object from Step 4>"` one more time and report to
+the user:
 - What trades were made today and why (or why none were made).
 - Current `monthly_return_pct` against the monthly goal.
 - Current `banked_cash`, if any of today's sells crossed the weekly

@@ -610,17 +610,22 @@ def test_cmd_backtest_run_rejects_overbought_candidate_for_next_ranked(tmp_path)
 def test_cmd_backtest_run_rejects_death_cross_candidate_for_next_ranked(tmp_path):
     # AAPL2 declines steadily for 200 days (500.0 down by 1.5/day to 201.5),
     # then has a choppy-but-net-rising 50-day tail (net +0.4/day drift with
-    # alternating +0.5/-0.9 noise). That tail keeps its 14-day RSI at ~64.3
-    # (not overbought) and its 5-day SMA above its 20-day SMA (confirmed
-    # short-term uptrend, not rejected by the existing MA-trend check) --
-    # but its 50-day SMA (~164, entirely within the mild recovery) is still
-    # far below its 200-day SMA (~267, dominated by the steep decline), so
-    # it must be REJECTED by the new golden-cross gate specifically.
+    # alternating +0.5/-0.9 noise). That tail keeps its Wilder-smoothed
+    # 14-day RSI at ~60.8 (not overbought) and its 5-day SMA above its 20-day
+    # SMA (confirmed short-term uptrend, not rejected by the existing
+    # MA-trend check) -- but its 50-day SMA (~164, entirely within the mild
+    # recovery) is still far below its 200-day SMA (~267, dominated by the
+    # steep decline), so it must be REJECTED by the new golden-cross gate
+    # specifically. (RSI computed by running the real Wilder-smoothing
+    # relative_strength_index against this exact 200-bar trailing window in
+    # a scratch script -- comfortably under the 70.0 overbought threshold, so
+    # the rejection is still driven by the golden-cross gate, not RSI.)
     #
     # JPM drifts gently upward the whole time (+0.01/day) with a small
     # alternating +/-0.02 wobble -- enough real up/down movement to keep its
-    # 14-day RSI at ~62.5 (not overbought) rather than pinned to 100 by a
-    # purely monotonic series, while its volatility/ATR over the last 3 days
+    # Wilder-smoothed 14-day RSI at ~60.7 (not overbought) rather than pinned
+    # to 100 by a purely monotonic series, while its volatility/ATR over the
+    # last 3 days
     # (~0.0059 / ~0.00066) stay far below AAPL2's (~0.143 / ~0.011), so JPM
     # ranks second. Its own 5/20 and 50/200 SMA checks are both `True` (the
     # gentle drift keeps recent averages above older ones), so JPM passes
