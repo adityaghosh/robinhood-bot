@@ -7,10 +7,10 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import backtest_commands, commands
+from . import backtest_commands, commands, ledger
 from .backtest_data import HistoricalPriceStore
 from .risk_engine import RiskConfig
-from .universe import UniverseConfig, build_universe
+from .universe import UniverseConfig, build_universe, is_bullish_ma_trend, relative_strength_index
 from .universe_client import LiveHistoricalDataFetcher, LiveMarketDataClient
 
 LEDGER_PATH = Path("data/ledger.json")
@@ -40,7 +40,7 @@ def _dispatch_backtest(args) -> dict:
     if args.backtest_command == "state":
         return backtest_commands.cmd_backtest_state(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, _parse_prices(args.prices_json),
-            date.fromisoformat(args.asof), cfg,
+            date.fromisoformat(args.asof), cfg, _build_price_store(),
         )
     if args.backtest_command == "quote":
         return backtest_commands.cmd_backtest_quote(
@@ -50,11 +50,13 @@ def _dispatch_backtest(args) -> dict:
         return backtest_commands.cmd_backtest_risk_check(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, args.action, args.symbol, args.value,
             _parse_prices(args.prices_json), cfg, sector=args.sector,
+            rsi=args.rsi, ma_trend_bullish=args.ma_bullish,
         )
     if args.backtest_command == "record-fill":
         return backtest_commands.cmd_backtest_record_fill(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, args.action, args.symbol,
             args.qty, args.price, date.fromisoformat(args.asof), args.reason, sector=args.sector,
+            rsi=args.rsi, ma_trend_bullish=args.ma_bullish,
         )
     if args.backtest_command == "check-stop-losses":
         return backtest_commands.cmd_backtest_check_stop_losses(
@@ -102,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     p_risk.add_argument("--value", type=float, default=0.0)
     p_risk.add_argument("--prices-json", default=None)
     p_risk.add_argument("--sector", default=None)
+    p_risk.add_argument("--rsi", type=float, default=50.0)
+    p_risk.add_argument("--ma-bullish", dest="ma_bullish", action=argparse.BooleanOptionalAction, default=None)
 
     p_fill = sub.add_parser("record-fill")
     p_fill.add_argument("action", choices=["buy", "sell"])
@@ -110,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     p_fill.add_argument("--price", type=float, required=True)
     p_fill.add_argument("--reason", default="")
     p_fill.add_argument("--sector", default=None)
+    p_fill.add_argument("--rsi", type=float, default=50.0)
+    p_fill.add_argument("--ma-bullish", dest="ma_bullish", action=argparse.BooleanOptionalAction, default=None)
 
     p_stop = sub.add_parser("check-stop-losses")
     p_stop.add_argument("--prices-json", required=True)
@@ -139,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_risk.add_argument("--value", type=float, default=0.0)
     p_bt_risk.add_argument("--prices-json", default=None)
     p_bt_risk.add_argument("--sector", default=None)
+    p_bt_risk.add_argument("--rsi", type=float, default=50.0)
+    p_bt_risk.add_argument("--ma-bullish", dest="ma_bullish", action=argparse.BooleanOptionalAction, default=None)
 
     p_bt_fill = backtest_sub.add_parser("record-fill")
     p_bt_fill.add_argument("action", choices=["buy", "sell"])
@@ -149,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_fill.add_argument("--price", type=float, required=True)
     p_bt_fill.add_argument("--reason", default="")
     p_bt_fill.add_argument("--sector", default=None)
+    p_bt_fill.add_argument("--rsi", type=float, default=50.0)
+    p_bt_fill.add_argument("--ma-bullish", dest="ma_bullish", action=argparse.BooleanOptionalAction, default=None)
 
     p_bt_stop = backtest_sub.add_parser("check-stop-losses")
     p_bt_stop.add_argument("--run", required=True)
@@ -178,18 +188,35 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RiskConfig()
 
     if args.command == "state":
+        universe_cfg = UniverseConfig()
+        held_state = ledger.load_state(LEDGER_PATH, STARTING_CASH)
+        held_symbols = {p.symbol for p in held_state.active_positions + held_state.long_hold_positions}
+        market_client = LiveMarketDataClient()
+        lookback = max(universe_cfg.rsi_window_days + 1, universe_cfg.ma_long_window_days) + 5
+        rsi_by_symbol: dict[str, float] = {}
+        ma_trend_by_symbol: dict[str, bool | None] = {}
+        for symbol in held_symbols:
+            bars = market_client.fetch_daily_bars(symbol, lookback)
+            closes = [bar.close for bar in bars]
+            rsi_by_symbol[symbol] = relative_strength_index(closes, universe_cfg.rsi_window_days)
+            ma_trend_by_symbol[symbol] = is_bullish_ma_trend(
+                closes, universe_cfg.ma_short_window_days, universe_cfg.ma_long_window_days
+            )
         result = commands.cmd_state(
-            LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE, cfg
+            LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE, cfg,
+            rsi_by_symbol=rsi_by_symbol, ma_trend_by_symbol=ma_trend_by_symbol,
         )
     elif args.command == "risk-check":
         result = commands.cmd_risk_check(
             LEDGER_PATH, STARTING_CASH, args.action, args.symbol, args.value,
             _parse_prices(args.prices_json), cfg, sector=args.sector,
+            rsi=args.rsi, ma_trend_bullish=args.ma_bullish,
         )
     elif args.command == "record-fill":
         result = commands.cmd_record_fill(
             LEDGER_PATH, TRADE_LOG_PATH, STARTING_CASH, args.action, args.symbol,
             args.qty, args.price, today, args.reason, sector=args.sector,
+            rsi=args.rsi, ma_trend_bullish=args.ma_bullish,
         )
     elif args.command == "check-stop-losses":
         result = commands.cmd_check_stop_losses(
@@ -214,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
                     "atr_pct": c.atr_pct,
                     "combined_rank": c.combined_rank,
                     "sector": c.sector,
+                    "rsi": c.rsi,
+                    "ma_trend_bullish": c.ma_trend_bullish,
                 }
                 for c in candidates
             ]
