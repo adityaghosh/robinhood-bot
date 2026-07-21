@@ -234,22 +234,11 @@ def main(argv: list[str] | None = None) -> int:
                 golden_cross_by_symbol[symbol] = is_bullish_ma_trend(
                     closes, universe_cfg.golden_cross_short_window_days, universe_cfg.golden_cross_long_window_days
                 )
-        else:
-            market_client = LiveMarketDataClient()
-            lookback = max(
-                universe_cfg.rsi_window_days + 1, universe_cfg.ma_long_window_days,
-                universe_cfg.golden_cross_long_window_days,
-            ) + 5
-            for symbol in held_symbols:
-                bars = market_client.fetch_daily_bars(symbol, lookback)
-                closes = [bar.close for bar in bars]
-                rsi_by_symbol[symbol] = relative_strength_index(closes, universe_cfg.rsi_window_days)
-                ma_trend_by_symbol[symbol] = is_bullish_ma_trend(
-                    closes, universe_cfg.ma_short_window_days, universe_cfg.ma_long_window_days
-                )
-                golden_cross_by_symbol[symbol] = is_bullish_ma_trend(
-                    closes, universe_cfg.golden_cross_short_window_days, universe_cfg.golden_cross_long_window_days
-                )
+        # No --closes-json provided: leave indicators at neutral defaults
+        # rather than fetching live data from this network-free command.
+        # (rsi_by_symbol/ma_trend_by_symbol/golden_cross_by_symbol simply
+        # stay empty dicts here; cmd_state already treats a missing entry
+        # as "unknown" and applies its own neutral defaults downstream.)
         result = commands.cmd_state(
             LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE, cfg,
             rsi_by_symbol=rsi_by_symbol, ma_trend_by_symbol=ma_trend_by_symbol,

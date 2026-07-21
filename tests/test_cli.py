@@ -376,7 +376,7 @@ def test_cli_backtest_risk_check_passes_golden_cross_bullish_flag(tmp_path, monk
     assert captured["golden_cross_bullish"] is False
 
 
-def test_cli_state_command_fetches_indicators_for_held_positions(tmp_path, monkeypatch, capsys):
+def test_cli_state_command_uses_neutral_defaults_for_held_positions_without_closes_json(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "LEDGER_PATH", tmp_path / "ledger.json")
     monkeypatch.setattr(cli, "TRADE_LOG_PATH", tmp_path / "trade_log.csv")
 
@@ -390,19 +390,13 @@ def test_cli_state_command_fetches_indicators_for_held_positions(tmp_path, monke
         ]),
     )
 
-    class FakeClient:
-        def fetch_daily_bars(self, ticker, lookback_days):
-            from robinhood_bot.universe import Bar
-            return [Bar(101.0 + i, 99.0 + i, 100.0 + i) for i in range(25)]
-
-    monkeypatch.setattr(cli, "LiveMarketDataClient", FakeClient)
-
     exit_code = cli.main(["state", "--prices-json", '{"AAPL": 124.0}'])
 
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
-    assert output["active_positions"][0]["rsi"] == pytest.approx(100.0)
-    assert output["active_positions"][0]["ma_trend_bullish"] is True
+    assert output["active_positions"][0]["rsi"] == 50.0
+    assert output["active_positions"][0]["ma_trend_bullish"] is None
+    assert output["active_positions"][0]["golden_cross_bullish"] is None
 
 
 def test_cli_state_command_uses_closes_json_for_indicators_when_provided(tmp_path, monkeypatch, capsys):
@@ -419,12 +413,6 @@ def test_cli_state_command_uses_closes_json_for_indicators_when_provided(tmp_pat
         ]),
     )
 
-    class ExplodingClient:
-        def fetch_daily_bars(self, ticker, lookback_days):
-            raise AssertionError("fetch_daily_bars should not be called when --closes-json is provided")
-
-    monkeypatch.setattr(cli, "LiveMarketDataClient", ExplodingClient)
-
     closes = [100.0 + i for i in range(25)]
     exit_code = cli.main([
         "state", "--prices-json", '{"AAPL": 124.0}',
@@ -435,31 +423,3 @@ def test_cli_state_command_uses_closes_json_for_indicators_when_provided(tmp_pat
     output = json.loads(capsys.readouterr().out)
     assert output["active_positions"][0]["rsi"] == pytest.approx(100.0)
     assert output["active_positions"][0]["ma_trend_bullish"] is True
-
-
-def test_cli_state_command_fetches_golden_cross_for_held_positions(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "LEDGER_PATH", tmp_path / "ledger.json")
-    monkeypatch.setattr(cli, "TRADE_LOG_PATH", tmp_path / "trade_log.csv")
-
-    from robinhood_bot import ledger as ledger_module
-    from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
-
-    ledger_module.save_state(
-        tmp_path / "ledger.json",
-        PortfolioState(cash=5_000.0, active_positions=[
-            Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
-        ]),
-    )
-
-    class FakeClient:
-        def fetch_daily_bars(self, ticker, lookback_days):
-            from robinhood_bot.universe import Bar
-            return [Bar(101.0 + i * 0.1, 99.0 + i * 0.1, 100.0 + i * 0.1) for i in range(201)]
-
-    monkeypatch.setattr(cli, "LiveMarketDataClient", FakeClient)
-
-    exit_code = cli.main(["state", "--prices-json", '{"AAPL": 124.0}'])
-
-    assert exit_code == 0
-    output = json.loads(capsys.readouterr().out)
-    assert output["active_positions"][0]["golden_cross_bullish"] is True
