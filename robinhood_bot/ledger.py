@@ -21,6 +21,7 @@ def _position_to_dict(position: Position) -> dict:
         "sector": position.sector,
         "rsi": position.rsi,
         "ma_trend_bullish": position.ma_trend_bullish,
+        "golden_cross_bullish": position.golden_cross_bullish,
     }
 
 
@@ -37,6 +38,7 @@ def _position_from_dict(data: dict) -> Position:
         sector=data.get("sector"),
         rsi=data.get("rsi"),
         ma_trend_bullish=data.get("ma_trend_bullish"),
+        golden_cross_bullish=data.get("golden_cross_bullish"),
     )
 
 
