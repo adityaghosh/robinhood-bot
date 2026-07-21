@@ -30,6 +30,12 @@ def _parse_prices(raw: str | None) -> dict[str, float]:
     return json.loads(raw)
 
 
+def _parse_closes(raw: str | None) -> dict[str, list[float]]:
+    if not raw:
+        return {}
+    return json.loads(raw)
+
+
 def _build_price_store() -> HistoricalPriceStore:
     return HistoricalPriceStore(LiveHistoricalDataFetcher(), HISTORICAL_CACHE_DIR)
 
@@ -96,7 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="robinhood_bot.cli")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("state").add_argument("--prices-json", default=None)
+    p_state = sub.add_parser("state")
+    p_state.add_argument("--prices-json", default=None)
+    p_state.add_argument("--closes-json", default=None)
 
     p_risk = sub.add_parser("risk-check")
     p_risk.add_argument("action", choices=["buy", "sell"])
@@ -195,24 +203,38 @@ def main(argv: list[str] | None = None) -> int:
         universe_cfg = UniverseConfig()
         held_state = ledger.load_state(LEDGER_PATH, STARTING_CASH)
         held_symbols = {p.symbol for p in held_state.active_positions + held_state.long_hold_positions}
-        market_client = LiveMarketDataClient()
-        lookback = max(
-            universe_cfg.rsi_window_days + 1, universe_cfg.ma_long_window_days,
-            universe_cfg.golden_cross_long_window_days,
-        ) + 5
+        closes_by_symbol = _parse_closes(args.closes_json)
         rsi_by_symbol: dict[str, float] = {}
         ma_trend_by_symbol: dict[str, bool | None] = {}
         golden_cross_by_symbol: dict[str, bool | None] = {}
-        for symbol in held_symbols:
-            bars = market_client.fetch_daily_bars(symbol, lookback)
-            closes = [bar.close for bar in bars]
-            rsi_by_symbol[symbol] = relative_strength_index(closes, universe_cfg.rsi_window_days)
-            ma_trend_by_symbol[symbol] = is_bullish_ma_trend(
-                closes, universe_cfg.ma_short_window_days, universe_cfg.ma_long_window_days
-            )
-            golden_cross_by_symbol[symbol] = is_bullish_ma_trend(
-                closes, universe_cfg.golden_cross_short_window_days, universe_cfg.golden_cross_long_window_days
-            )
+        if closes_by_symbol:
+            for symbol in held_symbols:
+                closes = closes_by_symbol.get(symbol)
+                if closes is None:
+                    continue
+                rsi_by_symbol[symbol] = relative_strength_index(closes, universe_cfg.rsi_window_days)
+                ma_trend_by_symbol[symbol] = is_bullish_ma_trend(
+                    closes, universe_cfg.ma_short_window_days, universe_cfg.ma_long_window_days
+                )
+                golden_cross_by_symbol[symbol] = is_bullish_ma_trend(
+                    closes, universe_cfg.golden_cross_short_window_days, universe_cfg.golden_cross_long_window_days
+                )
+        else:
+            market_client = LiveMarketDataClient()
+            lookback = max(
+                universe_cfg.rsi_window_days + 1, universe_cfg.ma_long_window_days,
+                universe_cfg.golden_cross_long_window_days,
+            ) + 5
+            for symbol in held_symbols:
+                bars = market_client.fetch_daily_bars(symbol, lookback)
+                closes = [bar.close for bar in bars]
+                rsi_by_symbol[symbol] = relative_strength_index(closes, universe_cfg.rsi_window_days)
+                ma_trend_by_symbol[symbol] = is_bullish_ma_trend(
+                    closes, universe_cfg.ma_short_window_days, universe_cfg.ma_long_window_days
+                )
+                golden_cross_by_symbol[symbol] = is_bullish_ma_trend(
+                    closes, universe_cfg.golden_cross_short_window_days, universe_cfg.golden_cross_long_window_days
+                )
         result = commands.cmd_state(
             LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE, cfg,
             rsi_by_symbol=rsi_by_symbol, ma_trend_by_symbol=ma_trend_by_symbol,
