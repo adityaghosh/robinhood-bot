@@ -19,7 +19,7 @@ UNIVERSE_CACHE_PATH = Path("data/universe_cache.json")
 SECTOR_CACHE_PATH = Path("data/sector_cache.json")
 BACKTEST_BASE_DIR = Path("data/backtests")
 HISTORICAL_CACHE_DIR = Path("data/historical_price_cache")
-STARTING_CASH = 10_000.0
+STARTING_CASH = 5_000.0
 TRADING_MODE = "paper"
 BENCHMARK_SYMBOL = "SPY"
 
@@ -85,9 +85,15 @@ def _dispatch_backtest(args) -> dict:
             LiveMarketDataClient(), UNIVERSE_CACHE_PATH, SECTOR_CACHE_PATH, UniverseConfig(), date.today(),
         )
         candidate_sectors = {c.symbol: c.sector for c in candidates if c.sector is not None}
+        cfg_overrides = {}
+        if args.slots is not None:
+            cfg_overrides["max_active_positions"] = args.slots
+        if args.weekly_profit_goal is not None:
+            cfg_overrides["weekly_profit_goal"] = args.weekly_profit_goal
+        run_cfg = RiskConfig(**cfg_overrides) if cfg_overrides else cfg
         return backtest_commands.cmd_backtest_run(
-            args.run, BACKTEST_BASE_DIR, STARTING_CASH, date.fromisoformat(args.start),
-            date.fromisoformat(args.end), [c.symbol for c in candidates], candidate_sectors, store, cfg,
+            args.run, BACKTEST_BASE_DIR, args.starting_cash, date.fromisoformat(args.start),
+            date.fromisoformat(args.end), [c.symbol for c in candidates], candidate_sectors, store, run_cfg,
             BENCHMARK_SYMBOL,
         )
     if args.backtest_command == "report":
@@ -187,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_run.add_argument("--run", required=True)
     p_bt_run.add_argument("--start", required=True)
     p_bt_run.add_argument("--end", required=True)
+    p_bt_run.add_argument("--starting-cash", dest="starting_cash", type=float, default=STARTING_CASH)
+    p_bt_run.add_argument("--slots", dest="slots", type=int, default=None)
+    p_bt_run.add_argument("--weekly-profit-goal", dest="weekly_profit_goal", type=float, default=None)
 
     p_bt_report = backtest_sub.add_parser("report")
     p_bt_report.add_argument("--run", required=True)

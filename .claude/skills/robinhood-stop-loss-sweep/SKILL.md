@@ -33,9 +33,9 @@ for the weekly profit-goal sweep below, exactly like an active winner.
 
 ## Step 2 — Get fresh quotes
 
-Using the Robinhood MCP quote tool (e.g. `get_equity_quotes`), fetch a
-current price for every symbol from Step 1's `active_positions` **and**
-`long_hold_positions`.
+Call `get_equity_quotes` with every symbol from Step 1's
+`active_positions` **and** `long_hold_positions` to fetch a current
+price for each.
 
 **If a quote fails for any symbol: skip that symbol this sweep.** Never
 fabricate or reuse a stale price.
@@ -73,10 +73,51 @@ symbol, since a sold symbol could now be either.
 
 **If `trading_mode` is `"live"`:**
 
-1. Call the Robinhood MCP order-placement tool (e.g.
-   `place_equity_order`) to sell the position.
-2. Call `record-fill` using the actual filled quantity/price from that
-   tool's response, not the Step 2 quote.
+This sweep runs mid-day, so unlike the daily cycle it may find regular
+hours still open — check `get_equity_tradability` per symbol (below)
+rather than assuming an after-hours session.
+
+For each SELL, in order (resolve and confirm one fully before moving to
+the next):
+
+1. **Resolve the account** (once per sweep, reuse for every SELL below):
+   call `get_accounts`, filter for `agentic_allowed: true`. Exactly one
+   such account should exist (this bot's dedicated Agentic account per
+   `USAGE.md`) — if you find zero or more than one, stop and report
+   instead of guessing.
+2. **Check tradability and pick the session:** call
+   `get_equity_tradability` for `account_number` + this symbol.
+   - Eligible for `regular_hours` right now → use `regular_hours`.
+   - Not eligible for `regular_hours` but eligible for `extended_hours`
+     → use `extended_hours`; eligible only for `all_day_hours` → use
+     that instead.
+   - Eligible for none of those right now → skip this SELL this sweep
+     and note it in the report as "not currently tradable in any live
+     session."
+3. **Get the marketable limit price:** call `get_equity_price_book` for
+   this symbol and use the best **bid** (this is a SELL) as
+   `limit_price` — never the Step 2 quote, which may be stale by now.
+4. **Place the order:** call `place_equity_order` directly (no
+   `review_equity_order` first — `trading_mode: "live"` plus this
+   position already having breached its threshold via
+   `check-stop-losses` is this sweep's standing authorization) with
+   `account_number`, `symbol`, `side: "sell"`, `type: "limit"`,
+   `limit_price` (as a string) from step 3, `quantity` (as a string) =
+   `<held qty>`, `market_hours` from step 2, and a freshly generated
+   `ref_id`. If it fails or is rejected: do not call `record-fill`;
+   report the failure and reason plainly.
+5. **Confirm the fill:** call `get_equity_orders` with `account_number`
+   and the returned `order_id`. On `filled`, use the actual filled
+   quantity and average price for `record-fill` below. On
+   `partially_filled`, check once or twice more; if still partial, only
+   record the quantity actually filled. On `cancelled`/`rejected`/
+   `failed`/`voided`, do not call `record-fill` — report the terminal
+   state. If still pending after a few checks, treat as unresolved this
+   sweep and say so, rather than guessing at a fill.
+
+```
+python -m robinhood_bot.cli record-fill sell SYMBOL --qty <actual filled qty> --price <actual average fill price> --reason "weekly profit-goal exit"
+```
 
 Entries with `"action": "SKIP"` or `"action": "HOLD"` need no action.
 

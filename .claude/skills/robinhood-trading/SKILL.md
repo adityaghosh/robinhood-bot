@@ -85,21 +85,23 @@ From the `candidates` list (sorted by `combined_rank`, descending), take:
 
 ## Step 4 — Get fresh quotes
 
-Using the Robinhood MCP quote tool (e.g. `get_equity_quotes`), fetch a
-current price for every symbol in the Step 3 shortlist.
+Call `get_equity_quotes` with the Step 3 shortlist's symbols to fetch a
+current price for each.
 
 **If a quote fails for any symbol: skip that symbol for this cycle.**
 Never fabricate, estimate, or reuse a stale price in its place.
 
 Also, for every symbol in Step 1's `active_positions` and
 `long_hold_positions` (already a subset of this shortlist per Step 3),
-fetch daily closes via `get_equity_historicals` (`interval: "day"`,
-`start_time` ~210 calendar days back, up to 10 symbols per call — batch
-into multiple calls if more than 10 symbols are held) and build a JSON
-object of `symbol: [chronological closing prices, oldest first]` from
-each bar's `close_price`. This replaces `cli.py`'s own (yfinance-based)
-lookup for these symbols' RSI/moving-average/golden-cross figures with
-the same source the fresh quotes just came from.
+fetch daily closes via `get_equity_historicals` — `symbols` (up to 10 per
+call, batch into multiple calls if more than 10 symbols are held),
+`interval: "day"`, `start_time` set to ~210 calendar days back from today
+as an RFC3339 UTC timestamp (e.g. `2026-01-01T00:00:00Z`; `end_time` can
+be omitted, it defaults to now) — and build a JSON object of `symbol:
+[chronological closing prices, oldest first]` from each bar's
+`close_price`. This replaces `cli.py`'s own (yfinance-based) lookup for
+these symbols' RSI/moving-average/golden-cross figures with the same
+source the fresh quotes just came from.
 
 **If historicals fail for a held symbol, or come back with fewer than
 200 closes: omit that symbol from the closes object.** `cli.py` falls
@@ -210,23 +212,86 @@ python -m robinhood_bot.cli record-fill buy SYMBOL --qty <n> --price <fresh quot
 python -m robinhood_bot.cli record-fill sell SYMBOL --qty <held qty> --price <fresh quote price> --reason "<why>"
 ```
 
-Never call the live order-placement MCP tool in this mode.
+Never call any live order-placement MCP tool in this mode.
 
 **If `trading_mode` is `"live"`:**
 
-1. Call the Robinhood MCP order-placement tool (e.g.
-   `place_equity_order`) for the approved trade.
-2. Once it confirms a fill, call `record-fill` using the **actual**
-   filled quantity and price from that tool's response — never the
-   pre-trade quote, even if they're close.
+**0. Resolve the account (once per cycle, reuse for every trade below).**
+Call `get_accounts` and filter for `agentic_allowed: true`. Per this
+project's setup (`USAGE.md`), exactly one such account should exist —
+the dedicated Agentic account this bot is allowed to touch. If you find
+zero or more than one, **stop and report this to the user instead of
+guessing** — do not fall back to a non-agentic account or pick
+arbitrarily among several. Cache the resulting `account_number` for
+every MCP call below, for the rest of this cycle.
+
+For each approved trade, in order (same one-at-a-time rule as Step 7 —
+resolve and execute this trade fully before moving to the next):
+
+**1. Check tradability and pick the session.** Call
+`get_equity_tradability` for `account_number` + this symbol. This cycle
+runs after market close, so regular hours is never the target session —
+read which of `extended_hours` / `all_day_hours` the symbol is
+*currently* eligible for and use that as `market_hours` below:
+   - Eligible for `extended_hours` right now → use `extended_hours`.
+   - Not eligible for `extended_hours` but eligible for `all_day_hours`
+     (Robinhood's 24-hour market, later in the evening or for
+     24-hour-eligible symbols) → use `all_day_hours`.
+   - Eligible for neither right now → **skip this trade for this
+     cycle** and note it in the summary as "not currently tradable in
+     any live session" — do not fall back to a `regular_hours` order,
+     since that would silently queue until tomorrow's open instead of
+     executing against the data this cycle just gathered.
+
+**2. Get the marketable limit price.** Call `get_equity_price_book` for
+this symbol and read the top of book: use the best **ask** for a BUY,
+the best **bid** for a SELL. This is the `limit_price` below — never the
+Step 4/Step 1 quote, which can be seconds to minutes stale by now.
+
+**3. Place the order.** Call `place_equity_order` directly — do not
+call `review_equity_order` first; entering `"live"` mode is itself this
+cycle's standing authorization, and `cli.py risk-check` (Step 7) is
+already the hard, non-overridable gate on every trade.
+   - `account_number`: from step 0.
+   - `symbol`, `side` (`"buy"`/`"sell"`).
+   - `type`: `"limit"`.
+   - `limit_price`: from step 2, as a string.
+   - `quantity`: the approved share count from Step 6/7, as a string.
+   - `market_hours`: from step 1.
+   - `ref_id`: a freshly generated UUID for this logical order (reuse
+     the same one only if retrying this exact order after a transport
+     failure — never on a new trade).
+
+If `place_equity_order` itself fails or is rejected: do not call
+`record-fill`. Leave the ledger untouched and note the failure and its
+reason in your summary — surface it, don't retry silently or guess at
+what happened.
+
+**4. Confirm the fill before recording it.** A limit order — even a
+marketable one — isn't guaranteed to fill synchronously in
+`place_equity_order`'s own response. Call `get_equity_orders` with
+`account_number` and the returned `order_id` to check `state`:
+   - `filled`: use the response's actual filled quantity and average
+     price for `record-fill` below.
+   - `partially_filled`: check again once or twice more (a few seconds
+     apart is enough for a marketable order in an open session); if it's
+     still only partially filled after that, `record-fill` **only the
+     quantity actually filled** at its average price, and note the
+     unfilled remainder in your summary — never round up to the
+     originally requested quantity.
+   - `cancelled` / `rejected` / `failed` / `voided`: do not call
+     `record-fill`. Report the terminal state and any reason plainly.
+   - still `new` / `queued` / `confirmed` / `unconfirmed` after a few
+     checks: treat as **unresolved** for this cycle — do not call
+     `record-fill` (there's no confirmed fill data yet), and say so
+     explicitly in the summary so the next stop-loss-sweep or daily
+     cycle knows to check this order's status via `get_equity_orders`
+     before assuming the position is (or isn't) open.
 
 ```
-python -m robinhood_bot.cli record-fill buy SYMBOL --qty <actual filled qty> --price <actual fill price> --sector <same sector passed to Step 7's risk-check> --rsi <same rsi passed to Step 7's risk-check> --ma-bullish/--no-ma-bullish (matching Step 7's risk-check, omit if null) --golden-cross-bullish/--no-golden-cross-bullish (matching Step 7's risk-check, omit if null) --reason "<why>"
+python -m robinhood_bot.cli record-fill buy SYMBOL --qty <actual filled qty> --price <actual average fill price> --sector <same sector passed to Step 7's risk-check> --rsi <same rsi passed to Step 7's risk-check> --ma-bullish/--no-ma-bullish (matching Step 7's risk-check, omit if null) --golden-cross-bullish/--no-golden-cross-bullish (matching Step 7's risk-check, omit if null) --reason "<why>"
+python -m robinhood_bot.cli record-fill sell SYMBOL --qty <actual filled qty> --price <actual average fill price> --reason "<why>"
 ```
-
-If order placement fails: do not call `record-fill`. Leave the ledger
-untouched and note the failure in your summary — surface it, don't
-retry silently or guess at what happened.
 
 ## Step 9 — Summarize
 

@@ -9,11 +9,11 @@ from .portfolio_state import Position, PositionStatus, PortfolioState
 
 @dataclass
 class RiskConfig:
-    max_active_positions: int = 5
+    max_active_positions: int = 10
     max_bonus_active_slots: int = 2
     max_positions_per_sector: int = 1
     stop_loss_pct: float = 0.05
-    weekly_profit_goal: float = 500.0
+    weekly_profit_goal: float = 250.0
     grace_period_days: int = 5
     max_position_pct: float = 0.20
     min_position_pct: float = 0.05
