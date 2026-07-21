@@ -10,8 +10,8 @@ from pathlib import Path
 from . import backtest_commands, commands, ledger
 from .backtest_data import HistoricalPriceStore
 from .risk_engine import RiskConfig
-from .universe import UniverseConfig, build_universe, is_bullish_ma_trend, relative_strength_index
-from .universe_client import LiveHistoricalDataFetcher, LiveMarketDataClient
+from .universe import UniverseConfig, finalize_candidates, is_bullish_ma_trend, rank_by_scan, relative_strength_index
+from .universe_client import LiveHistoricalDataFetcher
 
 LEDGER_PATH = Path("data/ledger.json")
 TRADE_LOG_PATH = Path("data/trade_log.csv")
@@ -138,8 +138,14 @@ def main(argv: list[str] | None = None) -> int:
     p_stop.add_argument("--apply", action="store_true")
 
     p_universe = sub.add_parser("universe")
-    p_universe.add_argument("--refresh", action="store_true")
-    p_universe.add_argument("--mode", choices=["realized_vol", "atr_pct", "both"], default=None)
+    universe_sub = p_universe.add_subparsers(dest="universe_command", required=True)
+
+    p_universe_rank = universe_sub.add_parser("rank")
+    p_universe_rank.add_argument("--scan-rows-json", required=True)
+
+    p_universe_finalize = universe_sub.add_parser("finalize")
+    p_universe_finalize.add_argument("--candidates-json", required=True)
+    p_universe_finalize.add_argument("--closes-json", default=None)
 
     p_backtest = sub.add_parser("backtest")
     backtest_sub = p_backtest.add_subparsers(dest="backtest_command", required=True)
@@ -269,28 +275,30 @@ def main(argv: list[str] | None = None) -> int:
         result = _dispatch_backtest(args)
     else:
         universe_cfg = UniverseConfig()
-        if args.mode:
-            universe_cfg.ranking_mode = args.mode
-        candidates = build_universe(
-            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, SECTOR_CACHE_PATH, universe_cfg, today, args.refresh
-        )
-        result = {
-            "candidates": [
-                {
-                    "symbol": c.symbol,
-                    "category": c.category,
-                    "market_cap": c.market_cap,
-                    "realized_vol": c.realized_vol,
-                    "atr_pct": c.atr_pct,
-                    "combined_rank": c.combined_rank,
-                    "sector": c.sector,
-                    "rsi": c.rsi,
-                    "ma_trend_bullish": c.ma_trend_bullish,
-                    "golden_cross_bullish": c.golden_cross_bullish,
-                }
-                for c in candidates
-            ]
-        }
+        if args.universe_command == "rank":
+            scan_rows = json.loads(args.scan_rows_json)
+            ranked = rank_by_scan(scan_rows, universe_cfg)
+            result = {"ranked": ranked}
+        else:
+            candidates_rows = json.loads(args.candidates_json)
+            closes_by_symbol = _parse_closes(args.closes_json)
+            candidates = finalize_candidates(candidates_rows, closes_by_symbol, universe_cfg)
+            result = {
+                "candidates": [
+                    {
+                        "symbol": c.symbol,
+                        "category": c.category,
+                        "market_cap": c.market_cap,
+                        "pct_change": c.pct_change,
+                        "combined_rank": c.combined_rank,
+                        "sector": c.sector,
+                        "rsi": c.rsi,
+                        "ma_trend_bullish": c.ma_trend_bullish,
+                        "golden_cross_bullish": c.golden_cross_bullish,
+                    }
+                    for c in candidates
+                ]
+            }
 
     print(json.dumps(result, indent=2))
     return 0

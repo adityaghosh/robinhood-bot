@@ -30,29 +30,39 @@ def test_cli_state_command_includes_trading_mode(tmp_path, monkeypatch, capsys):
     assert output["trading_mode"] == "live"
 
 
-def test_cli_universe_command_prints_json(monkeypatch, capsys):
-    fake_candidates = [
-        universe.Candidate(
-            "AAPL", "sp500", 3.0e12, 0.25, 0.02, 1.0, sector="Technology", rsi=62.0,
-            ma_trend_bullish=True, golden_cross_bullish=True,
-        ),
-    ]
+def test_cli_universe_rank_command_prints_ranked_json(capsys):
+    scan_rows_json = json.dumps([
+        {"symbol": "A", "market_cap": 1.0e11, "pct_change": 1.0, "rsi": 40.0},
+        {"symbol": "B", "market_cap": 2.0e11, "pct_change": 5.0, "rsi": 60.0},
+    ])
 
-    def fake_build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh):
-        return fake_candidates
+    exit_code = cli.main(["universe", "rank", "--scan-rows-json", scan_rows_json])
 
-    monkeypatch.setattr(cli, "build_universe", fake_build_universe)
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["ranked"][0]["symbol"] == "B"
+    assert output["ranked"][0]["combined_rank"] == 1.0
+    assert output["ranked"][1]["symbol"] == "A"
 
-    exit_code = cli.main(["universe"])
+
+def test_cli_universe_finalize_command_prints_candidates_json(capsys):
+    candidates_json = json.dumps([{
+        "symbol": "AAPL", "category": "scanned", "market_cap": 3.0e12, "pct_change": 2.0,
+        "combined_rank": 0.8, "sector": "Technology", "rsi": 62.0,
+    }])
+    closes = [90.0] * 15 + [110.0] * 5
+    closes_json = json.dumps({"AAPL": closes})
+
+    exit_code = cli.main([
+        "universe", "finalize", "--candidates-json", candidates_json, "--closes-json", closes_json,
+    ])
 
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
     assert output["candidates"][0]["symbol"] == "AAPL"
-    assert output["candidates"][0]["combined_rank"] == 1.0
+    assert output["candidates"][0]["combined_rank"] == 0.8
     assert output["candidates"][0]["sector"] == "Technology"
-    assert output["candidates"][0]["rsi"] == 62.0
     assert output["candidates"][0]["ma_trend_bullish"] is True
-    assert output["candidates"][0]["golden_cross_bullish"] is True
 
 
 def test_cli_backtest_state_command_prints_json(tmp_path, monkeypatch, capsys):
