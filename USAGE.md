@@ -140,9 +140,10 @@ it actually existed on each past date. This is a known, accepted
 simplification (survivorship bias), not a bug; see
 `docs/superpowers/specs/2026-07-19-backtesting-design.md` for the full
 rationale and other non-goals. In practice that list is usually a
-snapshot of today's live candidates — e.g. run the scan described under
-"Where your data lives" once and reuse its output — but the command
-itself is now network-free and has no opinion on how you produced it.
+snapshot of today's live candidates — e.g. run the `universe rank`/
+`universe finalize` sequence described under "Manual CLI reference"
+below once and reuse its output — but the command itself is now
+network-free and has no opinion on how you produced it.
 
 **LLM-driven backtest** — runs the actual daily-cycle skill's research
 and decision logic (the same judgment `/robinhood-trading` uses live),
