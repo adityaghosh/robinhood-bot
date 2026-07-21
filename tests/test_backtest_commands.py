@@ -514,12 +514,15 @@ def test_cmd_backtest_run_skips_same_sector_candidate_for_next_ranked(tmp_path):
 
 
 def test_cmd_backtest_run_rejects_overbought_candidate_for_next_ranked(tmp_path):
-    # AAPL2 ranks first (its bars show a monotonic 25-day rise, giving both
-    # the highest volatility/ATR score AND an RSI of 100 -- deeply overbought)
-    # but must be REJECTED by the new RSI gate; JPM ranks second (flat/mild
-    # bars, neutral RSI) and should be the one actually bought instead. If
-    # the RSI gate weren't wired into this loop, AAPL2 (the top-ranked
-    # candidate) would be bought instead.
+    # AAPL2 and JPM land in an exact 0.5/0.5 combined vol+ATR score tie
+    # (AAPL2's steady +1/day rise gives it a much higher ATR score but a much
+    # LOWER realized-vol score than JPM's noisy flat bars -- they average out
+    # to the same combined rank), broken by candidate-list order so AAPL2
+    # ranks first. AAPL2's monotonic rise also gives it an RSI of 100 --
+    # deeply overbought -- so it must be REJECTED by the new RSI gate; JPM
+    # (neutral RSI ~50) should be the one actually bought instead. If the RSI
+    # gate weren't wired into this loop, AAPL2 (the first-ranked candidate)
+    # would be bought instead.
     aapl2_bars = [
         HistoricalBar(date(2025, 12, 15) + timedelta(days=i), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i)
         for i in range(37)
