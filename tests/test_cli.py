@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from robinhood_bot import backtest_data, cli, universe
+from robinhood_bot import backtest_data, cli
 
 
 def test_cli_state_command_prints_json(tmp_path, monkeypatch, capsys):
@@ -153,11 +153,6 @@ def test_cli_backtest_run_command_delegates_to_backtest_commands(tmp_path, monke
     monkeypatch.setattr(cli, "HISTORICAL_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(cli, "BACKTEST_BASE_DIR", tmp_path / "backtests")
 
-    fake_candidates = [universe.Candidate("AAPL", "sp500", 3.0e12, 0.25, 0.02, 1.0, sector="Technology")]
-    monkeypatch.setattr(
-        cli, "build_universe", lambda client, cache_path, sector_cache_path, cfg, today: fake_candidates
-    )
-
     captured = {}
 
     def fake_cmd_backtest_run(
@@ -170,10 +165,17 @@ def test_cli_backtest_run_command_delegates_to_backtest_commands(tmp_path, monke
 
     monkeypatch.setattr(cli.backtest_commands, "cmd_backtest_run", fake_cmd_backtest_run)
 
-    exit_code = cli.main(["backtest", "run", "--run", "run1", "--start", "2026-01-01", "--end", "2026-01-05"])
+    candidates_json = json.dumps([
+        {"symbol": "AAPL", "sector": "Technology"},
+        {"symbol": "TQQQ", "sector": None},
+    ])
+    exit_code = cli.main([
+        "backtest", "run", "--run", "run1", "--start", "2026-01-01", "--end", "2026-01-05",
+        "--candidates-json", candidates_json,
+    ])
 
     assert exit_code == 0
-    assert captured["candidate_symbols"] == ["AAPL"]
+    assert captured["candidate_symbols"] == ["AAPL", "TQQQ"]
     assert captured["candidate_sectors"] == {"AAPL": "Technology"}
     output = json.loads(capsys.readouterr().out)
     assert output["run_id"] == "run1"

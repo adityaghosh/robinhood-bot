@@ -15,8 +15,6 @@ from .universe_client import LiveHistoricalDataFetcher
 
 LEDGER_PATH = Path("data/ledger.json")
 TRADE_LOG_PATH = Path("data/trade_log.csv")
-UNIVERSE_CACHE_PATH = Path("data/universe_cache.json")
-SECTOR_CACHE_PATH = Path("data/sector_cache.json")
 BACKTEST_BASE_DIR = Path("data/backtests")
 HISTORICAL_CACHE_DIR = Path("data/historical_price_cache")
 STARTING_CASH = 5_000.0
@@ -81,10 +79,9 @@ def _dispatch_backtest(args) -> dict:
         )
     if args.backtest_command == "run":
         store = _build_price_store()
-        candidates = build_universe(
-            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, SECTOR_CACHE_PATH, UniverseConfig(), date.today(),
-        )
-        candidate_sectors = {c.symbol: c.sector for c in candidates if c.sector is not None}
+        candidates = json.loads(args.candidates_json)
+        candidate_symbols = [c["symbol"] for c in candidates]
+        candidate_sectors = {c["symbol"]: c["sector"] for c in candidates if c.get("sector")}
         cfg_overrides = {}
         if args.slots is not None:
             cfg_overrides["max_active_positions"] = args.slots
@@ -93,7 +90,7 @@ def _dispatch_backtest(args) -> dict:
         run_cfg = RiskConfig(**cfg_overrides) if cfg_overrides else cfg
         return backtest_commands.cmd_backtest_run(
             args.run, BACKTEST_BASE_DIR, args.starting_cash, date.fromisoformat(args.start),
-            date.fromisoformat(args.end), [c.symbol for c in candidates], candidate_sectors, store, run_cfg,
+            date.fromisoformat(args.end), candidate_symbols, candidate_sectors, store, run_cfg,
             BENCHMARK_SYMBOL,
         )
     if args.backtest_command == "report":
@@ -202,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_run.add_argument("--starting-cash", dest="starting_cash", type=float, default=STARTING_CASH)
     p_bt_run.add_argument("--slots", dest="slots", type=int, default=None)
     p_bt_run.add_argument("--weekly-profit-goal", dest="weekly_profit_goal", type=float, default=None)
+    p_bt_run.add_argument("--candidates-json", required=True)
 
     p_bt_report = backtest_sub.add_parser("report")
     p_bt_report.add_argument("--run", required=True)
