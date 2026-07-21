@@ -18,6 +18,8 @@ class UniverseConfig:
     rsi_window_days: int = 14
     ma_short_window_days: int = 5
     ma_long_window_days: int = 20
+    golden_cross_short_window_days: int = 50
+    golden_cross_long_window_days: int = 200
     cache_max_age_days: int = 7
     ranking_mode: str = "both"
 
@@ -58,6 +60,7 @@ class Candidate:
     sector: str | None = None
     rsi: float = 50.0
     ma_trend_bullish: bool | None = None
+    golden_cross_bullish: bool | None = None
 
 
 class MarketDataClient(Protocol):
@@ -269,11 +272,15 @@ def build_universe(
         sectors[member.symbol] = None
     all_members = resolved_members + leveraged
 
-    lookback = max(cfg.realized_vol_window_days, cfg.atr_window_days, cfg.rsi_window_days + 1, cfg.ma_long_window_days) + 1
+    lookback = max(
+        cfg.realized_vol_window_days, cfg.atr_window_days, cfg.rsi_window_days + 1,
+        cfg.ma_long_window_days, cfg.golden_cross_long_window_days,
+    ) + 1
     realized_vols: dict[str, float] = {}
     atr_pcts: dict[str, float] = {}
     rsis: dict[str, float] = {}
     ma_trends: dict[str, bool | None] = {}
+    golden_crosses: dict[str, bool | None] = {}
 
     for member in all_members:
         bars = client.fetch_daily_bars(member.symbol, lookback)
@@ -284,6 +291,9 @@ def build_universe(
         atr_pcts[member.symbol] = average_true_range_pct(bars[-(cfg.atr_window_days + 1):])
         rsis[member.symbol] = relative_strength_index(closes, cfg.rsi_window_days)
         ma_trends[member.symbol] = is_bullish_ma_trend(closes, cfg.ma_short_window_days, cfg.ma_long_window_days)
+        golden_crosses[member.symbol] = is_bullish_ma_trend(
+            closes, cfg.golden_cross_short_window_days, cfg.golden_cross_long_window_days
+        )
 
     vol_ranks = percentile_ranks(realized_vols)
     atr_ranks = percentile_ranks(atr_pcts)
@@ -308,6 +318,7 @@ def build_universe(
             sector=sectors[member.symbol],
             rsi=rsis[member.symbol],
             ma_trend_bullish=ma_trends[member.symbol],
+            golden_cross_bullish=golden_crosses[member.symbol],
         ))
 
     candidates.sort(key=lambda c: c.combined_rank, reverse=True)
