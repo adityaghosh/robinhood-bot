@@ -59,6 +59,33 @@ def test_cmd_backtest_state_includes_fresh_rsi_for_held_position(tmp_path):
     assert result["active_positions"][0]["ma_trend_bullish"] is True
 
 
+def test_cmd_backtest_state_includes_fresh_golden_cross_for_held_position(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=5_000.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2025, 6, 1), PositionStatus.ACTIVE)],
+    ))
+
+    bars = [
+        HistoricalBar(date(2025, 6, 1) + timedelta(days=i), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i)
+        for i in range(201)
+    ]
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    asof = bars[-1].date
+
+    result = backtest_commands.cmd_backtest_state(
+        "run1", tmp_path, starting_cash=0.0, prices={"AAPL": 300.0}, asof=asof,
+        cfg=RiskConfig(), store=store,
+    )
+
+    assert result["active_positions"][0]["golden_cross_bullish"] is True
+
+
 def test_cmd_backtest_quote_returns_price_from_store(tmp_path):
     class FakeFetcher:
         def fetch_history(self, symbol, start, end):
@@ -555,6 +582,72 @@ def test_cmd_backtest_run_rejects_overbought_candidate_for_next_ranked(tmp_path)
     )
 
     paths = backtest_commands.resolve_run_paths("run_rsi", tmp_path)
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+    assert [p.symbol for p in final_state.active_positions] == ["JPM"]
+
+
+def test_cmd_backtest_run_rejects_death_cross_candidate_for_next_ranked(tmp_path):
+    # AAPL2 declines steadily for 200 days (500.0 down by 1.5/day to 201.5),
+    # then has a choppy-but-net-rising 50-day tail (net +0.4/day drift with
+    # alternating +0.5/-0.9 noise). That tail keeps its 14-day RSI at ~64.3
+    # (not overbought) and its 5-day SMA above its 20-day SMA (confirmed
+    # short-term uptrend, not rejected by the existing MA-trend check) --
+    # but its 50-day SMA (~164, entirely within the mild recovery) is still
+    # far below its 200-day SMA (~267, dominated by the steep decline), so
+    # it must be REJECTED by the new golden-cross gate specifically.
+    #
+    # JPM drifts gently upward the whole time (+0.01/day) with a small
+    # alternating +/-0.02 wobble -- enough real up/down movement to keep its
+    # 14-day RSI at ~62.5 (not overbought) rather than pinned to 100 by a
+    # purely monotonic series, while its volatility/ATR over the last 3 days
+    # (~0.0059 / ~0.00066) stay far below AAPL2's (~0.143 / ~0.011), so JPM
+    # ranks second. Its own 5/20 and 50/200 SMA checks are both `True` (the
+    # gentle drift keeps recent averages above older ones), so JPM passes
+    # every gate cleanly and is the one that should actually get bought. If
+    # the golden-cross gate weren't wired into this loop, AAPL2 (the
+    # top-ranked candidate on volatility/ATR) would be bought instead.
+    closes = [500.0 - i * 1.5 for i in range(200)]
+    base = closes[-1]
+    for i in range(50):
+        drift = base + i * 0.4
+        noise = 0.5 if i % 2 == 0 else -0.9
+        closes.append(drift + noise)
+
+    start_date = date(2025, 6, 1)
+    aapl2_bars = [
+        HistoricalBar(start_date + timedelta(days=i), c + 1.0, c + 1.0, c - 1.0, c)
+        for i, c in enumerate(closes)
+    ]
+    end_date = start_date + timedelta(days=len(closes) - 1)
+    jpm_closes = [150.0 + i * 0.01 + (0.02 if i % 2 == 0 else -0.02) for i in range(len(closes))]
+    jpm_bars = [
+        HistoricalBar(start_date + timedelta(days=i), c + 0.05, c + 0.05, c - 0.05, c)
+        for i, c in enumerate(jpm_closes)
+    ]
+    bars = {
+        "SPY": [HistoricalBar(end_date, 400.0, 401.0, 399.0, 400.0)],
+        "AAPL2": aapl2_bars,
+        "JPM": jpm_bars,
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars.get(symbol, []) if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, stop_loss_pct=0.5, weekly_profit_goal=100_000.0,
+        max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
+        rsi_overbought_threshold=70.0,
+    )
+
+    backtest_commands.cmd_backtest_run(
+        "run_golden", tmp_path, starting_cash=10_000.0, start=end_date, end=end_date,
+        candidate_symbols=["AAPL2", "JPM"], candidate_sectors={}, store=store, cfg=cfg,
+        vol_window_days=2, atr_window_days=2,
+    )
+
+    paths = backtest_commands.resolve_run_paths("run_golden", tmp_path)
     final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
     assert [p.symbol for p in final_state.active_positions] == ["JPM"]
 
