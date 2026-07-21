@@ -19,6 +19,9 @@ def _position_to_dict(position: Position) -> dict:
             position.underwater_since.isoformat() if position.underwater_since else None
         ),
         "sector": position.sector,
+        "rsi": position.rsi,
+        "ma_trend_bullish": position.ma_trend_bullish,
+        "golden_cross_bullish": position.golden_cross_bullish,
     }
 
 
@@ -33,12 +36,16 @@ def _position_from_dict(data: dict) -> Position:
             date.fromisoformat(data["underwater_since"]) if data["underwater_since"] else None
         ),
         sector=data.get("sector"),
+        rsi=data.get("rsi"),
+        ma_trend_bullish=data.get("ma_trend_bullish"),
+        golden_cross_bullish=data.get("golden_cross_bullish"),
     )
 
 
 def state_to_dict(state: PortfolioState) -> dict:
     return {
         "cash": state.cash,
+        "banked_cash": state.banked_cash,
         "active_positions": [_position_to_dict(p) for p in state.active_positions],
         "long_hold_positions": [_position_to_dict(p) for p in state.long_hold_positions],
         "month": state.month,
@@ -52,6 +59,7 @@ def state_to_dict(state: PortfolioState) -> dict:
 def state_from_dict(data: dict) -> PortfolioState:
     return PortfolioState(
         cash=data["cash"],
+        banked_cash=data.get("banked_cash", 0.0),
         active_positions=[_position_from_dict(p) for p in data["active_positions"]],
         long_hold_positions=[_position_from_dict(p) for p in data["long_hold_positions"]],
         month=data.get("month", ""),

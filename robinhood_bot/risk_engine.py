@@ -18,7 +18,10 @@ class RiskConfig:
     max_position_pct: float = 0.20
     min_position_pct: float = 0.05
     long_hold_capital_cap_pct: float = 0.30
-    monthly_circuit_breaker_pct: float = 0.10
+    monthly_circuit_breaker_pct: float = 0.05
+    rsi_overbought_threshold: float = 70.0
+    profit_bank_band_width: float = 100.0
+    profit_bank_rate_step: float = 0.25
 
 
 class ExitAction(str, Enum):
@@ -84,6 +87,33 @@ def evaluate_profit_exits(
     return to_sell
 
 
+def banked_amount(week_realized_pnl_before: float, gain: float, cfg: RiskConfig) -> float:
+    if gain <= 0:
+        return 0.0
+
+    threshold = cfg.weekly_profit_goal
+    width = cfg.profit_bank_band_width
+    step = cfg.profit_bank_rate_step
+
+    pos = week_realized_pnl_before
+    end = week_realized_pnl_before + gain
+    banked = 0.0
+
+    while pos < end:
+        if pos < threshold:
+            segment_end = min(threshold, end)
+            rate = 0.0
+        else:
+            band_index = int((pos - threshold) // width)
+            band_end = threshold + (band_index + 1) * width
+            segment_end = min(band_end, end)
+            rate = min(1.0, (band_index + 1) * step)
+        banked += (segment_end - pos) * rate
+        pos = segment_end
+
+    return banked
+
+
 def max_new_position_value(
     total_equity: float, long_hold_capital: float, cfg: RiskConfig
 ) -> float:
@@ -116,6 +146,9 @@ def evaluate_buy(
     total_equity: float,
     cfg: RiskConfig,
     sector: str | None,
+    rsi: float,
+    ma_trend_bullish: bool | None,
+    golden_cross_bullish: bool | None,
 ) -> BuyDecision:
     max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
 
@@ -130,6 +163,23 @@ def evaluate_buy(
                 f"sector concentration: already at the {cfg.max_positions_per_sector}-position limit for {sector}",
                 max_value,
             )
+
+    if rsi > cfg.rsi_overbought_threshold:
+        return BuyDecision(
+            False,
+            f"overbought: RSI {rsi:.1f} exceeds {cfg.rsi_overbought_threshold:.0f}",
+            max_value,
+        )
+
+    if ma_trend_bullish is False:
+        return BuyDecision(False, "no confirmed short-term uptrend (short MA at or below long MA)", max_value)
+
+    if golden_cross_bullish is False:
+        return BuyDecision(
+            False,
+            "long-term trend bearish (50-day SMA at or below 200-day SMA / death cross)",
+            max_value,
+        )
 
     if circuit_breaker_tripped(state.month_start_equity, total_equity, cfg):
         return BuyDecision(False, "monthly circuit breaker tripped", max_value)

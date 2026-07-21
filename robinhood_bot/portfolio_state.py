@@ -20,6 +20,9 @@ class Position:
     status: PositionStatus
     underwater_since: date | None = None
     sector: str | None = None
+    rsi: float | None = None
+    ma_trend_bullish: bool | None = None
+    golden_cross_bullish: bool | None = None
 
     @property
     def cost_basis(self) -> float:
@@ -29,6 +32,7 @@ class Position:
 @dataclass
 class PortfolioState:
     cash: float
+    banked_cash: float = 0.0
     active_positions: list[Position] = field(default_factory=list)
     long_hold_positions: list[Position] = field(default_factory=list)
     month: str = ""

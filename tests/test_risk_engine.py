@@ -5,7 +5,7 @@ import pytest
 
 from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
 from robinhood_bot.risk_engine import (
-    RiskConfig, ExitAction, bonus_active_slots, current_weekly_tier, evaluate_position,
+    RiskConfig, ExitAction, banked_amount, bonus_active_slots, current_weekly_tier, evaluate_position,
     evaluate_profit_exits, max_new_position_value, circuit_breaker_tripped, evaluate_buy,
     evaluate_sell,
 )
@@ -145,7 +145,7 @@ def test_evaluate_buy_rejects_when_symbol_already_held():
     state = PortfolioState(cash=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
     ])
-    decision = evaluate_buy(state, "AAPL", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "AAPL", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is False
     assert "already held" in decision.reason
 
@@ -153,7 +153,7 @@ def test_evaluate_buy_rejects_when_symbol_already_held():
 def test_evaluate_buy_rejects_when_circuit_breaker_tripped():
     cfg = RiskConfig(monthly_circuit_breaker_pct=0.10)
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=8_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=8_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is False
     assert "circuit breaker" in decision.reason
 
@@ -163,7 +163,7 @@ def test_evaluate_buy_rejects_when_no_active_slots():
     state = PortfolioState(cash=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE)
     ])
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is False
     assert "slots" in decision.reason
 
@@ -171,7 +171,7 @@ def test_evaluate_buy_rejects_when_no_active_slots():
 def test_evaluate_buy_rejects_when_oversized():
     cfg = RiskConfig(max_position_pct=0.20)
     state = PortfolioState(cash=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=5_000.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=5_000.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is False
     assert "exceeds max position size" in decision.reason
 
@@ -179,7 +179,7 @@ def test_evaluate_buy_rejects_when_oversized():
 def test_evaluate_buy_rejects_when_insufficient_cash():
     cfg = RiskConfig(max_position_pct=0.50)
     state = PortfolioState(cash=1_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=2_000.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=2_000.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is False
     assert "insufficient cash" in decision.reason
 
@@ -187,7 +187,7 @@ def test_evaluate_buy_rejects_when_insufficient_cash():
 def test_evaluate_buy_approves_happy_path():
     cfg = RiskConfig(max_position_pct=0.20)
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
-    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is True
     assert decision.max_position_value == 2_000.0
 
@@ -197,7 +197,7 @@ def test_evaluate_buy_rejects_when_sector_concentration_limit_reached():
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
     ])
-    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector="Technology")
+    decision = evaluate_buy(state, "MSFT", proposed_value=500.0, total_equity=10_000.0, cfg=cfg, sector="Technology", rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is False
     assert "sector concentration" in decision.reason
 
@@ -207,7 +207,7 @@ def test_evaluate_buy_approves_when_different_sector_held():
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
         Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
     ])
-    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials")
+    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials", rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is True
 
 
@@ -216,7 +216,7 @@ def test_evaluate_buy_approves_when_sector_none_bypasses_concentration_check():
     state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0, active_positions=[
         Position("TQQQ", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector=None)
     ])
-    decision = evaluate_buy(state, "UPRO", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None)
+    decision = evaluate_buy(state, "UPRO", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is True
 
 
@@ -231,7 +231,7 @@ def test_evaluate_buy_approves_when_bonus_slot_from_prior_week_surplus_allows_it
             Position("AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Technology")
         ],
     )
-    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials")
+    decision = evaluate_buy(state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Financials", rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is True
 
 
@@ -247,9 +247,82 @@ def test_evaluate_buy_rejects_when_even_boosted_effective_cap_is_reached():
             Position("MSFT", 5, 300.0, date(2026, 7, 1), PositionStatus.ACTIVE, sector="Financials"),
         ],
     )
-    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Energy")
+    decision = evaluate_buy(state, "JPM", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg, sector="Energy", rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None)
     assert decision.approved is False
     assert "no active slots available" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_overbought():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=75.0, ma_trend_bullish=True, golden_cross_bullish=True,
+    )
+    assert decision.approved is False
+    assert "overbought" in decision.reason
+
+
+def test_evaluate_buy_rejects_when_no_confirmed_uptrend():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=50.0, ma_trend_bullish=False, golden_cross_bullish=None,
+    )
+    assert decision.approved is False
+    assert "uptrend" in decision.reason
+
+
+def test_evaluate_buy_approves_when_ma_trend_unknown_bypasses_check():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=50.0, ma_trend_bullish=None, golden_cross_bullish=None,
+    )
+    assert decision.approved is True
+
+
+def test_evaluate_buy_approves_at_exact_rsi_threshold():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=70.0, ma_trend_bullish=True, golden_cross_bullish=True,
+    )
+    assert decision.approved is True
+
+
+def test_evaluate_buy_rejects_when_death_cross():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=50.0, ma_trend_bullish=True, golden_cross_bullish=False,
+    )
+    assert decision.approved is False
+    assert "death cross" in decision.reason
+
+
+def test_evaluate_buy_approves_when_golden_cross_unknown_bypasses_check():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=50.0, ma_trend_bullish=True, golden_cross_bullish=None,
+    )
+    assert decision.approved is True
+
+
+def test_evaluate_buy_approves_when_golden_cross_bullish():
+    cfg = RiskConfig(rsi_overbought_threshold=70.0, max_position_pct=0.20)
+    state = PortfolioState(cash=10_000.0, month_start_equity=10_000.0)
+    decision = evaluate_buy(
+        state, "MSFT", proposed_value=1_500.0, total_equity=10_000.0, cfg=cfg,
+        sector=None, rsi=50.0, ma_trend_bullish=True, golden_cross_bullish=True,
+    )
+    assert decision.approved is True
 
 
 def test_evaluate_sell_approves_active_holding():
@@ -292,6 +365,43 @@ def test_current_weekly_tier_handles_negative_realized_pnl():
 def test_current_weekly_tier_clamps_deep_negative_realized_pnl_to_zero():
     cfg = RiskConfig(weekly_profit_goal=500.0)
     assert current_weekly_tier(-600.0, cfg) == 0.0
+
+
+def test_banked_amount_zero_below_weekly_profit_goal():
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    assert banked_amount(week_realized_pnl_before=100.0, gain=200.0, cfg=cfg) == 0.0
+
+
+def test_banked_amount_zero_for_a_loss_or_breakeven():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert banked_amount(week_realized_pnl_before=600.0, gain=-50.0, cfg=cfg) == 0.0
+    assert banked_amount(week_realized_pnl_before=600.0, gain=0.0, cfg=cfg) == 0.0
+
+
+def test_banked_amount_splits_gain_across_bracket_boundary():
+    # before=450, gain=200 -> end=650. $50 of the gain (450->500) is below
+    # the threshold (0% banked), the next $100 (500->600) is in the first
+    # band (25%), and the last $50 (600->650) is in the second band (50%).
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    banked = banked_amount(week_realized_pnl_before=450.0, gain=200.0, cfg=cfg)
+    assert banked == pytest.approx(0.0 + 100.0 * 0.25 + 50.0 * 0.5)
+
+
+def test_banked_amount_caps_at_full_rate_once_bands_exceed_100_percent():
+    # before=850, gain=100 -> entirely within bands 4+ ((850-500)//100=3,
+    # rate=min(1,(3+1)*0.25)=1.0), so the whole gain is banked.
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    banked = banked_amount(week_realized_pnl_before=850.0, gain=100.0, cfg=cfg)
+    assert banked == pytest.approx(100.0)
+
+
+def test_banked_amount_handles_negative_starting_realized_pnl():
+    # before=-200 (a loss earlier this week), gain=800 -> end=600. Only the
+    # $100 above the $500 threshold (500->600) is banked, at the first
+    # band's 25% rate.
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    banked = banked_amount(week_realized_pnl_before=-200.0, gain=800.0, cfg=cfg)
+    assert banked == pytest.approx(25.0)
 
 
 def test_evaluate_profit_exits_sells_single_winner_reaching_tier():

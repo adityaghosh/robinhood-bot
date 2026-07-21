@@ -33,6 +33,8 @@ def test_universe_config_defaults():
     assert cfg.atr_window_days == 14
     assert cfg.cache_max_age_days == 7
     assert cfg.ranking_mode == "both"
+    assert cfg.golden_cross_short_window_days == 50
+    assert cfg.golden_cross_long_window_days == 200
 
 
 def test_bar_fields():
@@ -152,6 +154,47 @@ def test_average_true_range_pct_known_value():
         Bar(high=104.0, low=100.5, close=103.0),
     ]
     assert average_true_range_pct(bars) == pytest.approx(0.030744336569579287)
+
+
+from robinhood_bot.universe import relative_strength_index
+
+
+def test_relative_strength_index_insufficient_data_is_neutral():
+    assert relative_strength_index([100.0, 101.0, 102.0]) == 50.0
+    assert relative_strength_index([]) == 50.0
+
+
+def test_relative_strength_index_all_gains_is_100():
+    closes = [100.0 + i for i in range(15)]
+    assert relative_strength_index(closes) == pytest.approx(100.0)
+
+
+def test_relative_strength_index_all_losses_is_zero():
+    closes = [114.0 - i for i in range(15)]
+    assert relative_strength_index(closes) == pytest.approx(0.0)
+
+
+def test_relative_strength_index_mixed_known_value():
+    closes = [100.0, 102.0, 101.0, 103.0, 102.0, 104.0, 103.0, 105.0, 104.0, 106.0, 105.0, 107.0, 106.0, 108.0, 107.0]
+    assert relative_strength_index(closes) == pytest.approx(66.666666, rel=1e-4)
+
+
+from robinhood_bot.universe import is_bullish_ma_trend
+
+
+def test_is_bullish_ma_trend_insufficient_data_is_none():
+    assert is_bullish_ma_trend([100.0] * 10) is None
+    assert is_bullish_ma_trend([]) is None
+
+
+def test_is_bullish_ma_trend_true_when_short_average_above_long_average():
+    closes = [90.0] * 15 + [110.0] * 5
+    assert is_bullish_ma_trend(closes) is True
+
+
+def test_is_bullish_ma_trend_false_when_short_average_at_or_below_long_average():
+    closes = [110.0] * 15 + [90.0] * 5
+    assert is_bullish_ma_trend(closes) is False
 
 
 from robinhood_bot.universe import percentile_ranks
@@ -451,3 +494,58 @@ def test_build_universe_includes_resolved_sector_on_candidate(tmp_path):
     candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
 
     assert candidates[0].sector == "Healthcare"
+
+
+def test_build_universe_includes_rsi_and_ma_trend_on_candidate(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0 + i) for i in range(25)]
+    client = FakeMarketDataClient(
+        sp500=["A"], nasdaq100=[],
+        market_caps={"A": 100.0},
+        bars={"A": bars},
+        sectors={"A": "Healthcare"},
+    )
+    cfg = UniverseConfig(top_n_sp500=1, top_n_nasdaq100=1, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert candidates[0].rsi == pytest.approx(100.0)
+    assert candidates[0].ma_trend_bullish is True
+
+
+def test_build_universe_includes_golden_cross_on_candidate(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0 + i * 0.1) for i in range(201)]
+    client = FakeMarketDataClient(
+        sp500=["A"], nasdaq100=[],
+        market_caps={"A": 100.0},
+        bars={"A": bars},
+        sectors={"A": "Healthcare"},
+    )
+    cfg = UniverseConfig(top_n_sp500=1, top_n_nasdaq100=1, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert candidates[0].golden_cross_bullish is True
+
+
+def test_build_universe_golden_cross_none_with_insufficient_history(tmp_path):
+    cache_path = tmp_path / "universe_cache.json"
+    sector_cache_path = tmp_path / "sector_cache.json"
+    today = date(2026, 7, 19)
+    bars = [Bar(101.0, 99.0, 100.0 + i) for i in range(25)]
+    client = FakeMarketDataClient(
+        sp500=["A"], nasdaq100=[],
+        market_caps={"A": 100.0},
+        bars={"A": bars},
+        sectors={"A": "Healthcare"},
+    )
+    cfg = UniverseConfig(top_n_sp500=1, top_n_nasdaq100=1, leveraged_funds=[])
+
+    candidates = build_universe(client, cache_path, sector_cache_path, cfg, today, force_refresh=False)
+
+    assert candidates[0].golden_cross_bullish is None

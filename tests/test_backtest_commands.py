@@ -1,5 +1,5 @@
 import csv
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -21,12 +21,69 @@ def test_cmd_backtest_state_reads_isolated_ledger(tmp_path):
     paths = backtest_commands.resolve_run_paths("run1", tmp_path)
     ledger.save_state(paths.ledger, PortfolioState(cash=5_000.0))
 
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return []
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
     result = backtest_commands.cmd_backtest_state(
-        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5), cfg=RiskConfig(),
+        "run1", tmp_path, starting_cash=0.0, prices={}, asof=date(2026, 1, 5), cfg=RiskConfig(), store=store,
     )
 
     assert result["cash"] == 5_000.0
     assert result["trading_mode"] == "backtest"
+
+
+def test_cmd_backtest_state_includes_fresh_rsi_for_held_position(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=5_000.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2026, 1, 1), PositionStatus.ACTIVE)],
+    ))
+
+    bars = [HistoricalBar(date(2026, 1, 1) + timedelta(days=i), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i) for i in range(25)]
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+
+    result = backtest_commands.cmd_backtest_state(
+        "run1", tmp_path, starting_cash=0.0, prices={"AAPL": 124.0}, asof=date(2026, 1, 25),
+        cfg=RiskConfig(), store=store,
+    )
+
+    assert result["active_positions"][0]["rsi"] == pytest.approx(100.0)
+    assert result["active_positions"][0]["ma_trend_bullish"] is True
+
+
+def test_cmd_backtest_state_includes_fresh_golden_cross_for_held_position(tmp_path):
+    paths = backtest_commands.resolve_run_paths("run1", tmp_path)
+    ledger.save_state(paths.ledger, PortfolioState(
+        cash=5_000.0,
+        active_positions=[Position("AAPL", 10, 100.0, date(2025, 6, 1), PositionStatus.ACTIVE)],
+    ))
+
+    bars = [
+        HistoricalBar(date(2025, 6, 1) + timedelta(days=i), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i)
+        for i in range(201)
+    ]
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    asof = bars[-1].date
+
+    result = backtest_commands.cmd_backtest_state(
+        "run1", tmp_path, starting_cash=0.0, prices={"AAPL": 300.0}, asof=asof,
+        cfg=RiskConfig(), store=store,
+    )
+
+    assert result["active_positions"][0]["golden_cross_bullish"] is True
 
 
 def test_cmd_backtest_quote_returns_price_from_store(tmp_path):
@@ -72,7 +129,7 @@ def test_cmd_backtest_record_fill_writes_isolated_trade_log(tmp_path):
 
     result = backtest_commands.cmd_backtest_record_fill(
         "run1", tmp_path, starting_cash=0.0, action="buy", symbol="MSFT",
-        qty=5, price=300.0, asof=date(2026, 1, 5), reason="test",
+        qty=5, price=300.0, asof=date(2026, 1, 5), reason="test", cfg=RiskConfig(),
     )
 
     assert result["cash"] == 8_500.0
@@ -109,11 +166,15 @@ def test_cmd_backtest_mark_day_appends_equity_curve_row(tmp_path):
     )
 
     assert row == {
-        "date": "2026-01-05", "cash": 1_000.0, "positions_value": 1_100.0, "total_equity": 2_100.0,
+        "date": "2026-01-05", "cash": 1_000.0, "banked_cash": 0.0, "positions_value": 1_100.0,
+        "total_equity": 2_100.0,
     }
     with paths.equity_curve.open() as f:
         rows = list(csv.DictReader(f))
-    assert rows == [{"date": "2026-01-05", "cash": "1000.0", "positions_value": "1100.0", "total_equity": "2100.0"}]
+    assert rows == [{
+        "date": "2026-01-05", "cash": "1000.0", "banked_cash": "0.0", "positions_value": "1100.0",
+        "total_equity": "2100.0",
+    }]
 
 
 def test_cmd_backtest_mark_day_falls_back_to_entry_price_when_quote_missing(tmp_path):
@@ -256,7 +317,13 @@ def test_cmd_backtest_run_executes_deterministic_entry_exit_cycle(tmp_path):
     assert final_state.active_positions[0].symbol == "A"
     assert final_state.active_positions[0].qty == 48
     assert final_state.active_positions[0].entry_price == 108.0
-    assert final_state.cash == pytest.approx(5_216.0)
+    # weekly_profit_goal=200.0 here means the $400 realized gain crosses the
+    # profit-banking threshold too: $200 of it stays fully reinvestable (0%
+    # banked), the next $100 is banked at 25% ($25), and the final $100 at 50%
+    # ($50) -- $75 banked total, so cash reflects proceeds net of that $75,
+    # not the full unbanked gain.
+    assert final_state.cash == pytest.approx(5_141.0)
+    assert final_state.banked_cash == pytest.approx(75.0)
     assert final_state.month == "2026-01"
     assert final_state.month_start_equity == pytest.approx(10_000.0)
     assert final_state.week == "2026-W02"
@@ -321,7 +388,14 @@ def test_cmd_backtest_run_escalates_tier_across_days_in_same_week(tmp_path):
     assert final_state.active_positions[0].symbol == "A"
     assert final_state.active_positions[0].qty == 47
     assert final_state.active_positions[0].entry_price == 110.0
-    assert final_state.cash == pytest.approx(5_326.0)
+    # weekly_profit_goal=200.0 is also the profit-banking threshold. Day 2's
+    # $400 gain banks $75 (same $200/$100/$100 bracket math as the
+    # deterministic entry/exit test above). Day 3's $96 gain starts from a
+    # week_realized_pnl of 400, which is already two $100-bands past the
+    # $200 threshold, landing entirely in the third band (rate 75%): banked
+    # = 96 * 0.75 = $72. Total banked across both sells: 75 + 72 = $147.
+    assert final_state.cash == pytest.approx(5_179.0)
+    assert final_state.banked_cash == pytest.approx(147.0)
 
     with paths.trade_log.open() as f:
         rows = list(csv.DictReader(f))
@@ -408,7 +482,11 @@ def test_cmd_backtest_run_sweeps_recovered_long_hold_position_for_profit(tmp_pat
 
     final_state = ledger.load_state(paths.ledger, starting_cash=1_000.0)
     assert final_state.long_hold_positions == []
-    assert final_state.cash == pytest.approx(2_500.0)
+    # weekly_profit_goal=300.0 is also the profit-banking threshold: $300 of
+    # the $500 gain is fully reinvestable (0% banked), the next $100 is
+    # banked at 25% ($25), and the final $100 at 50% ($50) -- $75 banked.
+    assert final_state.cash == pytest.approx(2_425.0)
+    assert final_state.banked_cash == pytest.approx(75.0)
     assert final_state.week_realized_pnl == pytest.approx(500.0)
 
     with paths.trade_log.open() as f:
@@ -481,6 +559,118 @@ def test_cmd_backtest_run_skips_same_sector_candidate_for_next_ranked(tmp_path):
     with paths.trade_log.open() as f:
         rows = list(csv.DictReader(f))
     assert [r["symbol"] for r in rows] == ["JPM"]
+
+
+def test_cmd_backtest_run_rejects_overbought_candidate_for_next_ranked(tmp_path):
+    # AAPL2 and JPM land in an exact 0.5/0.5 combined vol+ATR score tie
+    # (AAPL2's steady +1/day rise gives it a much higher ATR score but a much
+    # LOWER realized-vol score than JPM's noisy flat bars -- they average out
+    # to the same combined rank), broken by candidate-list order so AAPL2
+    # ranks first. AAPL2's monotonic rise also gives it an RSI of 100 --
+    # deeply overbought -- so it must be REJECTED by the new RSI gate; JPM
+    # (neutral RSI ~50) should be the one actually bought instead. If the RSI
+    # gate weren't wired into this loop, AAPL2 (the first-ranked candidate)
+    # would be bought instead.
+    aapl2_bars = [
+        HistoricalBar(date(2025, 12, 15) + timedelta(days=i), 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i)
+        for i in range(37)
+    ]
+    jpm_bars = [
+        HistoricalBar(date(2025, 12, 15) + timedelta(days=i), 150.0, 150.5, 149.5, 150.0 + (0.1 if i % 2 == 0 else -0.1))
+        for i in range(37)
+    ]
+    bars = {
+        "SPY": [HistoricalBar(date(2026, 1, 20), 400.0, 401.0, 399.0, 400.0)],
+        "AAPL2": aapl2_bars,
+        "JPM": jpm_bars,
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars.get(symbol, []) if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, stop_loss_pct=0.5, weekly_profit_goal=100_000.0,
+        max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
+        rsi_overbought_threshold=70.0,
+    )
+
+    backtest_commands.cmd_backtest_run(
+        "run_rsi", tmp_path, starting_cash=10_000.0, start=date(2026, 1, 20), end=date(2026, 1, 20),
+        candidate_symbols=["AAPL2", "JPM"], candidate_sectors={}, store=store, cfg=cfg,
+        vol_window_days=2, atr_window_days=2,
+    )
+
+    paths = backtest_commands.resolve_run_paths("run_rsi", tmp_path)
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+    assert [p.symbol for p in final_state.active_positions] == ["JPM"]
+
+
+def test_cmd_backtest_run_rejects_death_cross_candidate_for_next_ranked(tmp_path):
+    # AAPL2 declines steadily for 200 days (500.0 down by 1.5/day to 201.5),
+    # then has a choppy-but-net-rising 50-day tail (net +0.4/day drift with
+    # alternating +0.5/-0.9 noise). That tail keeps its 14-day RSI at ~64.3
+    # (not overbought) and its 5-day SMA above its 20-day SMA (confirmed
+    # short-term uptrend, not rejected by the existing MA-trend check) --
+    # but its 50-day SMA (~164, entirely within the mild recovery) is still
+    # far below its 200-day SMA (~267, dominated by the steep decline), so
+    # it must be REJECTED by the new golden-cross gate specifically.
+    #
+    # JPM drifts gently upward the whole time (+0.01/day) with a small
+    # alternating +/-0.02 wobble -- enough real up/down movement to keep its
+    # 14-day RSI at ~62.5 (not overbought) rather than pinned to 100 by a
+    # purely monotonic series, while its volatility/ATR over the last 3 days
+    # (~0.0059 / ~0.00066) stay far below AAPL2's (~0.143 / ~0.011), so JPM
+    # ranks second. Its own 5/20 and 50/200 SMA checks are both `True` (the
+    # gentle drift keeps recent averages above older ones), so JPM passes
+    # every gate cleanly and is the one that should actually get bought. If
+    # the golden-cross gate weren't wired into this loop, AAPL2 (the
+    # top-ranked candidate on volatility/ATR) would be bought instead.
+    closes = [500.0 - i * 1.5 for i in range(200)]
+    base = closes[-1]
+    for i in range(50):
+        drift = base + i * 0.4
+        noise = 0.5 if i % 2 == 0 else -0.9
+        closes.append(drift + noise)
+
+    start_date = date(2025, 6, 1)
+    aapl2_bars = [
+        HistoricalBar(start_date + timedelta(days=i), c + 1.0, c + 1.0, c - 1.0, c)
+        for i, c in enumerate(closes)
+    ]
+    end_date = start_date + timedelta(days=len(closes) - 1)
+    jpm_closes = [150.0 + i * 0.01 + (0.02 if i % 2 == 0 else -0.02) for i in range(len(closes))]
+    jpm_bars = [
+        HistoricalBar(start_date + timedelta(days=i), c + 0.05, c + 0.05, c - 0.05, c)
+        for i, c in enumerate(jpm_closes)
+    ]
+    bars = {
+        "SPY": [HistoricalBar(end_date, 400.0, 401.0, 399.0, 400.0)],
+        "AAPL2": aapl2_bars,
+        "JPM": jpm_bars,
+    }
+
+    class FakeFetcher:
+        def fetch_history(self, symbol, start, end):
+            return [b for b in bars.get(symbol, []) if start <= b.date <= end]
+
+    store = HistoricalPriceStore(FakeFetcher(), tmp_path / "cache")
+    cfg = RiskConfig(
+        max_active_positions=1, stop_loss_pct=0.5, weekly_profit_goal=100_000.0,
+        max_position_pct=0.5, min_position_pct=0.5, grace_period_days=5,
+        rsi_overbought_threshold=70.0,
+    )
+
+    backtest_commands.cmd_backtest_run(
+        "run_golden", tmp_path, starting_cash=10_000.0, start=end_date, end=end_date,
+        candidate_symbols=["AAPL2", "JPM"], candidate_sectors={}, store=store, cfg=cfg,
+        vol_window_days=2, atr_window_days=2,
+    )
+
+    paths = backtest_commands.resolve_run_paths("run_golden", tmp_path)
+    final_state = ledger.load_state(paths.ledger, starting_cash=10_000.0)
+    assert [p.symbol for p in final_state.active_positions] == ["JPM"]
 
 
 def test_cmd_backtest_run_fills_bonus_slot_from_prior_week_surplus(tmp_path):

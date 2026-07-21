@@ -114,3 +114,99 @@ def test_load_state_defaults_missing_prior_week_realized_pnl_to_zero_for_old_led
     loaded = ledger.load_state(path, starting_cash=0.0)
 
     assert loaded.prior_week_realized_pnl == 0.0
+
+
+def test_save_and_load_round_trip_preserves_banked_cash(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(cash=8_000.0, banked_cash=1_500.0)
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.banked_cash == 1_500.0
+
+
+def test_load_state_defaults_missing_banked_cash_to_zero_for_old_ledger_files(tmp_path):
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({
+        "cash": 5_000.0, "active_positions": [], "long_hold_positions": [],
+        "month": "", "month_start_equity": 0.0, "week": "", "week_realized_pnl": 0.0,
+        "prior_week_realized_pnl": 0.0,
+    }))
+
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.banked_cash == 0.0
+
+
+def test_save_and_load_round_trip_preserves_rsi_and_ma_trend(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(
+        cash=8_000.0,
+        active_positions=[
+            Position(
+                "AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE,
+                rsi=72.5, ma_trend_bullish=True,
+            )
+        ],
+    )
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.active_positions[0].rsi == 72.5
+    assert loaded.active_positions[0].ma_trend_bullish is True
+
+
+def test_save_and_load_round_trip_preserves_golden_cross(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(
+        cash=8_000.0,
+        active_positions=[
+            Position(
+                "AAPL", 10, 100.0, date(2026, 7, 1), PositionStatus.ACTIVE,
+                golden_cross_bullish=True,
+            )
+        ],
+    )
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.active_positions[0].golden_cross_bullish is True
+
+
+def test_load_state_defaults_missing_rsi_and_ma_trend_to_none_for_old_ledger_files(tmp_path):
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({
+        "cash": 5_000.0,
+        "active_positions": [{
+            "symbol": "AAPL", "qty": 10, "entry_price": 100.0,
+            "entry_date": "2026-07-01", "status": "ACTIVE", "underwater_since": None,
+            "sector": None,
+        }],
+        "long_hold_positions": [],
+        "month": "", "month_start_equity": 0.0, "week": "", "week_realized_pnl": 0.0,
+        "prior_week_realized_pnl": 0.0,
+    }))
+
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.active_positions[0].rsi is None
+    assert loaded.active_positions[0].ma_trend_bullish is None
+
+
+def test_load_state_defaults_missing_golden_cross_to_none_for_old_ledger_files(tmp_path):
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({
+        "cash": 5_000.0,
+        "active_positions": [{
+            "symbol": "AAPL", "qty": 10, "entry_price": 100.0,
+            "entry_date": "2026-07-01", "status": "ACTIVE", "underwater_since": None,
+            "sector": None, "rsi": None, "ma_trend_bullish": None,
+        }],
+        "long_hold_positions": [],
+        "month": "", "month_start_equity": 0.0, "week": "", "week_realized_pnl": 0.0,
+        "prior_week_realized_pnl": 0.0,
+    }))
+
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.active_positions[0].golden_cross_bullish is None
