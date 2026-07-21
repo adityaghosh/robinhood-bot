@@ -156,6 +156,7 @@ Defined in `robinhood_bot/risk_engine.py`, defaults in `RiskConfig`:
 | Max position size | 20% of equity | Ceiling on any single new position, scaled down as the long-hold bucket fills up (min 5%) |
 | Long-hold capital cap | 30% of equity | Utilization threshold that drives the position-size scaling above |
 | Monthly circuit breaker | 5% drawdown | Halts all new buys for the rest of the month if tripped |
+| Profit banking | Starts at $500/week, +25%/$100 band | Permanently protects a growing share of realized gains beyond the weekly profit goal into non-tradeable `banked_cash` |
 
 A position that breaches its stop-loss isn't sold immediately — it gets
 a grace period to recover (`WAITING` status, still occupies an active

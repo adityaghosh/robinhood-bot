@@ -116,6 +116,28 @@ def test_load_state_defaults_missing_prior_week_realized_pnl_to_zero_for_old_led
     assert loaded.prior_week_realized_pnl == 0.0
 
 
+def test_save_and_load_round_trip_preserves_banked_cash(tmp_path):
+    path = tmp_path / "ledger.json"
+    original = PortfolioState(cash=8_000.0, banked_cash=1_500.0)
+    ledger.save_state(path, original)
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.banked_cash == 1_500.0
+
+
+def test_load_state_defaults_missing_banked_cash_to_zero_for_old_ledger_files(tmp_path):
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({
+        "cash": 5_000.0, "active_positions": [], "long_hold_positions": [],
+        "month": "", "month_start_equity": 0.0, "week": "", "week_realized_pnl": 0.0,
+        "prior_week_realized_pnl": 0.0,
+    }))
+
+    loaded = ledger.load_state(path, starting_cash=0.0)
+
+    assert loaded.banked_cash == 0.0
+
+
 def test_save_and_load_round_trip_preserves_rsi_and_ma_trend(tmp_path):
     path = tmp_path / "ledger.json"
     original = PortfolioState(

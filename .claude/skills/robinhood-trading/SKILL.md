@@ -41,6 +41,17 @@ fine, this call is only to learn:
   usual 5 (see Step 6). `effective_max_active_positions` is the real
   cap to use everywhere below; the "5-slot" figure from before this
   mechanism existed is only the baseline, not a hard ceiling anymore.
+- `cash` is tradeable cash only — it excludes `banked_cash`, a separate,
+  permanently protected pool. Once a week's cumulative realized profit
+  crosses `week_profit_target`'s underlying $500 threshold, each further
+  dollar of gain is progressively banked (25% of the next $100, 50% of
+  the $100 after that, and so on up to 100%) and moves into
+  `banked_cash` instead of `cash` — a cushion so a later bad stretch
+  can't claw back everything, including past winnings. `banked_cash`
+  still counts toward `total_equity` (and thus `monthly_return_pct` and
+  the circuit breaker) — it's protected from *trading*, not excluded
+  from net worth. This is fully mechanical; there's no discretionary
+  step for it.
 
 ## Step 2 — Get the ranked universe
 
@@ -203,6 +214,10 @@ Run `python -m robinhood_bot.cli state --prices-json "<fresh quotes>"`
 one more time and report to the user:
 - What trades were made today and why (or why none were made).
 - Current `monthly_return_pct` against the monthly goal.
+- Current `banked_cash`, if any of today's sells crossed the weekly
+  profit-banking threshold — this is a one-way ratchet, so a growing
+  balance across cycles is worth surfacing as a running "protected
+  gains" figure, distinct from tradeable `cash`.
 - Anything that failed or was skipped (a quote that didn't come back, an
   order that failed to place), stated plainly.
 

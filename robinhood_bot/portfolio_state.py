@@ -32,6 +32,7 @@ class Position:
 @dataclass
 class PortfolioState:
     cash: float
+    banked_cash: float = 0.0
     active_positions: list[Position] = field(default_factory=list)
     long_hold_positions: list[Position] = field(default_factory=list)
     month: str = ""

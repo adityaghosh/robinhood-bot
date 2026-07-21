@@ -55,7 +55,7 @@ def _dispatch_backtest(args) -> dict:
     if args.backtest_command == "record-fill":
         return backtest_commands.cmd_backtest_record_fill(
             args.run, BACKTEST_BASE_DIR, STARTING_CASH, args.action, args.symbol,
-            args.qty, args.price, date.fromisoformat(args.asof), args.reason, sector=args.sector,
+            args.qty, args.price, date.fromisoformat(args.asof), args.reason, cfg, sector=args.sector,
             rsi=args.rsi, ma_trend_bullish=args.ma_bullish, golden_cross_bullish=args.golden_cross_bullish,
         )
     if args.backtest_command == "check-stop-losses":
@@ -227,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "record-fill":
         result = commands.cmd_record_fill(
             LEDGER_PATH, TRADE_LOG_PATH, STARTING_CASH, args.action, args.symbol,
-            args.qty, args.price, today, args.reason, sector=args.sector,
+            args.qty, args.price, today, args.reason, cfg, sector=args.sector,
             rsi=args.rsi, ma_trend_bullish=args.ma_bullish, golden_cross_bullish=args.golden_cross_bullish,
         )
     elif args.command == "check-stop-losses":

@@ -82,12 +82,12 @@ def cmd_backtest_risk_check(
 
 def cmd_backtest_record_fill(
     run_id: str, base_dir: Path, starting_cash: float, action: str, symbol: str,
-    qty: float, price: float, asof: date, reason: str, sector: str | None = None,
+    qty: float, price: float, asof: date, reason: str, cfg: RiskConfig, sector: str | None = None,
     rsi: float = 50.0, ma_trend_bullish: bool | None = None, golden_cross_bullish: bool | None = None,
 ) -> dict:
     paths = resolve_run_paths(run_id, base_dir)
     return commands.cmd_record_fill(
-        paths.ledger, paths.trade_log, starting_cash, action, symbol, qty, price, asof, reason, sector,
+        paths.ledger, paths.trade_log, starting_cash, action, symbol, qty, price, asof, reason, cfg, sector,
         rsi, ma_trend_bullish, golden_cross_bullish,
     )
 
@@ -112,8 +112,9 @@ def cmd_backtest_mark_day(
     row = {
         "date": asof.isoformat(),
         "cash": state.cash,
+        "banked_cash": state.banked_cash,
         "positions_value": positions_value,
-        "total_equity": state.cash + positions_value,
+        "total_equity": state.cash + state.banked_cash + positions_value,
     }
     _append_equity_curve(paths.equity_curve, row)
     return row
@@ -154,7 +155,7 @@ def _append_equity_curve(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     is_new = not path.exists()
     with path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["date", "cash", "positions_value", "total_equity"])
+        writer = csv.DictWriter(f, fieldnames=["date", "cash", "banked_cash", "positions_value", "total_equity"])
         if is_new:
             writer.writeheader()
         writer.writerow(row)
@@ -240,7 +241,7 @@ def cmd_backtest_run(
         # `cmd_state` itself.
         state = ledger.load_state(paths.ledger, starting_cash)
         cash, positions_value = _total_equity(state, store, today)
-        roll_month_if_needed(state, today, cash + positions_value)
+        roll_month_if_needed(state, today, cash + state.banked_cash + positions_value)
         roll_week_if_needed(state, today)
         ledger.save_state(paths.ledger, state)
 
@@ -256,7 +257,7 @@ def cmd_backtest_run(
         for position in evaluate_profit_exits(profit_candidates, profit_prices, state.week_realized_pnl, cfg):
             commands.cmd_record_fill(
                 paths.ledger, paths.trade_log, starting_cash, "sell", position.symbol,
-                position.qty, profit_prices[position.symbol], today, "weekly profit-goal exit",
+                position.qty, profit_prices[position.symbol], today, "weekly profit-goal exit", cfg,
             )
             state = ledger.load_state(paths.ledger, starting_cash)
 
@@ -282,7 +283,7 @@ def cmd_backtest_run(
                     continue
 
                 cash, positions_value = _total_equity(state, store, today)
-                total_equity = cash + positions_value
+                total_equity = cash + state.banked_cash + positions_value
                 max_value = max_new_position_value(total_equity, state.long_hold_capital(), cfg)
                 proposed_value = min(max_value, state.cash)
                 sector = candidate_sectors.get(symbol)
@@ -310,7 +311,7 @@ def cmd_backtest_run(
 
                 commands.cmd_record_fill(
                     paths.ledger, paths.trade_log, starting_cash, "buy", symbol, qty, price, today,
-                    "backtest entry", sector, rsi, ma_trend_bullish, golden_cross_bullish,
+                    "backtest entry", cfg, sector, rsi, ma_trend_bullish, golden_cross_bullish,
                 )
                 state = ledger.load_state(paths.ledger, starting_cash)
                 held.add(symbol)
@@ -321,8 +322,9 @@ def cmd_backtest_run(
         _append_equity_curve(paths.equity_curve, {
             "date": today.isoformat(),
             "cash": cash,
+            "banked_cash": state.banked_cash,
             "positions_value": positions_value,
-            "total_equity": cash + positions_value,
+            "total_equity": cash + state.banked_cash + positions_value,
         })
 
     return {

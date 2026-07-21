@@ -133,7 +133,7 @@ def test_cli_backtest_mark_day_command_appends_equity_curve_row(tmp_path, monkey
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
     assert output == {
-        "date": "2026-01-05", "cash": cli.STARTING_CASH, "positions_value": 0.0,
+        "date": "2026-01-05", "cash": cli.STARTING_CASH, "banked_cash": 0.0, "positions_value": 0.0,
         "total_equity": cli.STARTING_CASH,
     }
     assert (tmp_path / "run1" / "equity_curve.csv").exists()

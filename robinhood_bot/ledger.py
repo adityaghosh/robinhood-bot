@@ -45,6 +45,7 @@ def _position_from_dict(data: dict) -> Position:
 def state_to_dict(state: PortfolioState) -> dict:
     return {
         "cash": state.cash,
+        "banked_cash": state.banked_cash,
         "active_positions": [_position_to_dict(p) for p in state.active_positions],
         "long_hold_positions": [_position_to_dict(p) for p in state.long_hold_positions],
         "month": state.month,
@@ -58,6 +59,7 @@ def state_to_dict(state: PortfolioState) -> dict:
 def state_from_dict(data: dict) -> PortfolioState:
     return PortfolioState(
         cash=data["cash"],
+        banked_cash=data.get("banked_cash", 0.0),
         active_positions=[_position_from_dict(p) for p in data["active_positions"]],
         long_hold_positions=[_position_from_dict(p) for p in data["long_hold_positions"]],
         month=data.get("month", ""),

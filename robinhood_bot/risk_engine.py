@@ -20,6 +20,8 @@ class RiskConfig:
     long_hold_capital_cap_pct: float = 0.30
     monthly_circuit_breaker_pct: float = 0.05
     rsi_overbought_threshold: float = 70.0
+    profit_bank_band_width: float = 100.0
+    profit_bank_rate_step: float = 0.25
 
 
 class ExitAction(str, Enum):
@@ -83,6 +85,33 @@ def evaluate_profit_exits(
         to_sell.append(position)
         running += gain
     return to_sell
+
+
+def banked_amount(week_realized_pnl_before: float, gain: float, cfg: RiskConfig) -> float:
+    if gain <= 0:
+        return 0.0
+
+    threshold = cfg.weekly_profit_goal
+    width = cfg.profit_bank_band_width
+    step = cfg.profit_bank_rate_step
+
+    pos = week_realized_pnl_before
+    end = week_realized_pnl_before + gain
+    banked = 0.0
+
+    while pos < end:
+        if pos < threshold:
+            segment_end = min(threshold, end)
+            rate = 0.0
+        else:
+            band_index = int((pos - threshold) // width)
+            band_end = threshold + (band_index + 1) * width
+            segment_end = min(band_end, end)
+            rate = min(1.0, (band_index + 1) * step)
+        banked += (segment_end - pos) * rate
+        pos = segment_end
+
+    return banked
 
 
 def max_new_position_value(

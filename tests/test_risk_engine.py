@@ -5,7 +5,7 @@ import pytest
 
 from robinhood_bot.portfolio_state import Position, PositionStatus, PortfolioState
 from robinhood_bot.risk_engine import (
-    RiskConfig, ExitAction, bonus_active_slots, current_weekly_tier, evaluate_position,
+    RiskConfig, ExitAction, banked_amount, bonus_active_slots, current_weekly_tier, evaluate_position,
     evaluate_profit_exits, max_new_position_value, circuit_breaker_tripped, evaluate_buy,
     evaluate_sell,
 )
@@ -365,6 +365,43 @@ def test_current_weekly_tier_handles_negative_realized_pnl():
 def test_current_weekly_tier_clamps_deep_negative_realized_pnl_to_zero():
     cfg = RiskConfig(weekly_profit_goal=500.0)
     assert current_weekly_tier(-600.0, cfg) == 0.0
+
+
+def test_banked_amount_zero_below_weekly_profit_goal():
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    assert banked_amount(week_realized_pnl_before=100.0, gain=200.0, cfg=cfg) == 0.0
+
+
+def test_banked_amount_zero_for_a_loss_or_breakeven():
+    cfg = RiskConfig(weekly_profit_goal=500.0)
+    assert banked_amount(week_realized_pnl_before=600.0, gain=-50.0, cfg=cfg) == 0.0
+    assert banked_amount(week_realized_pnl_before=600.0, gain=0.0, cfg=cfg) == 0.0
+
+
+def test_banked_amount_splits_gain_across_bracket_boundary():
+    # before=450, gain=200 -> end=650. $50 of the gain (450->500) is below
+    # the threshold (0% banked), the next $100 (500->600) is in the first
+    # band (25%), and the last $50 (600->650) is in the second band (50%).
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    banked = banked_amount(week_realized_pnl_before=450.0, gain=200.0, cfg=cfg)
+    assert banked == pytest.approx(0.0 + 100.0 * 0.25 + 50.0 * 0.5)
+
+
+def test_banked_amount_caps_at_full_rate_once_bands_exceed_100_percent():
+    # before=850, gain=100 -> entirely within bands 4+ ((850-500)//100=3,
+    # rate=min(1,(3+1)*0.25)=1.0), so the whole gain is banked.
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    banked = banked_amount(week_realized_pnl_before=850.0, gain=100.0, cfg=cfg)
+    assert banked == pytest.approx(100.0)
+
+
+def test_banked_amount_handles_negative_starting_realized_pnl():
+    # before=-200 (a loss earlier this week), gain=800 -> end=600. Only the
+    # $100 above the $500 threshold (500->600) is banked, at the first
+    # band's 25% rate.
+    cfg = RiskConfig(weekly_profit_goal=500.0, profit_bank_band_width=100.0, profit_bank_rate_step=0.25)
+    banked = banked_amount(week_realized_pnl_before=-200.0, gain=800.0, cfg=cfg)
+    assert banked == pytest.approx(25.0)
 
 
 def test_evaluate_profit_exits_sells_single_winner_reaching_tier():
