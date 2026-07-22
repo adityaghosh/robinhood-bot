@@ -96,6 +96,9 @@ def percentile_ranks(values: dict[str, float]) -> dict[str, float]:
 
 
 def rank_by_scan(scan_rows: list[dict], cfg: UniverseConfig) -> list[dict]:
+    # cfg is unused here (nothing in this function is config-driven yet) --
+    # kept for interface parity with finalize_candidates and so callers
+    # don't need to special-case this function's signature.
     pct_changes = {row["symbol"]: row["pct_change"] for row in scan_rows}
     rsis = {row["symbol"]: row["rsi"] for row in scan_rows}
     pct_change_ranks = percentile_ranks(pct_changes)

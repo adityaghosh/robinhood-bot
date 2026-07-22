@@ -75,14 +75,19 @@ full rationale.
    rsi}>"` — returns the full result set sorted descending by
    `combined_rank` (a percentile-rank average of `pct_change` and `rsi`,
    computed in Python, not by hand).
-3. Walk that sorted list top-down. For each candidate, in batches of up to
-   20 symbols (the `get_financials` per-call limit), call `get_financials`
-   (`period: "quarterly"`, `limit: 5`) and compute YoY revenue growth:
-   `(revenue_this_quarter - revenue_same_quarter_last_year) /
-   revenue_same_quarter_last_year`. Drop any candidate with negative or flat
-   growth. If `get_financials` fails for a candidate, drop it too (never
-   assume a candidate passes a check that couldn't be verified) and keep
-   walking. Stop once 20 survivors are collected or the list runs out.
+3. Walk that sorted list top-down, checking growth for at most the top 40
+   candidates (`UniverseConfig.growth_filter_buffer`) even if fewer than 20
+   have survived by then — this bounds the number of `get_financials` calls
+   per cycle regardless of how many candidates fail the growth check. In
+   batches of up to 20 symbols (the `get_financials` per-call limit), call
+   `get_financials` (`period: "quarterly"`, `limit: 5`) and compute YoY
+   revenue growth: `(revenue_this_quarter - revenue_same_quarter_last_year)
+   / revenue_same_quarter_last_year`. Drop any candidate with negative or
+   flat growth. If `get_financials` fails for a candidate, drop it too
+   (never assume a candidate passes a check that couldn't be verified) and
+   keep walking. Stop once 20 survivors are collected, the 40-candidate
+   buffer is exhausted, or the list itself runs out — whichever comes
+   first.
 4. Append the 2 leveraged funds (`TQQQ`, `UPRO`) unconditionally — they
    never go through the scan or the growth filter. Give each a fixed
    `combined_rank` of `0.5` and `sector: null`.
