@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
-- Produces: `UniverseConfig` (fields: `leveraged_funds`, `rsi_window_days`, `ma_short_window_days`, `ma_long_window_days`, `golden_cross_short_window_days`, `golden_cross_long_window_days`, `growth_lookback_quarters`, `growth_filter_buffer`, `leveraged_combined_rank`), `Candidate` (fields: `symbol: str`, `category: str`, `market_cap: float`, `pct_change: float`, `combined_rank: float`, `sector: str | None`, `rsi: float`, `ma_trend_bullish: bool | None`, `golden_cross_bullish: bool | None`), `rank_by_scan(scan_rows: list[dict], cfg: UniverseConfig) -> list[dict]`, `finalize_candidates(rows: list[dict], closes_by_symbol: dict[str, list[float]], cfg: UniverseConfig) -> list[Candidate]`, plus the unchanged `relative_strength_index`, `is_bullish_ma_trend`, `percentile_ranks`. Task 3 (`cli.py`) calls `rank_by_scan` and `finalize_candidates` directly.
+- Produces: `UniverseConfig` (fields: `leveraged_funds`, `rsi_window_days`, `ma_short_window_days`, `ma_long_window_days`, `golden_cross_short_window_days`, `golden_cross_long_window_days`, `growth_lookback_quarters`, `growth_filter_buffer`, `leveraged_combined_rank`), `Candidate` (fields: `symbol: str`, `category: str`, `market_cap: float`, `pct_change: float`, `combined_rank: float`, `sector: str | None`, `rsi: float`, `ma_trend_bullish: bool | None`, `golden_cross_bullish: bool | None`), `rank_by_scan(scan_rows: list[dict], cfg: UniverseConfig) -> list[dict]`, `finalize_candidates(rows: list[dict], closes_by_symbol: dict[str, list[float]], cfg: UniverseConfig) -> list[Candidate]`, plus the unchanged `relative_strength_index`, `is_bullish_ma_trend`, `percentile_ranks`. Task 3 (`cli.py`) calls `rank_by_scan` and `finalize_candidates` directly. **`Bar`, `realized_volatility`, and `average_true_range_pct` must also be kept, unchanged, in this file** — `robinhood_bot/backtest_commands.py` imports all three from `.universe` for its own, separate `rank_candidates_as_of` (Global Constraints: that function is untouched by this plan). They have no dependency on anything else being removed in this task; deleting them breaks `backtest_commands.py`'s import and every test in `tests/test_backtest_commands.py`.
 
 - [ ] **Step 1: Replace `tests/test_universe.py` with the new test suite**
 
@@ -39,12 +39,15 @@ from datetime import date
 import pytest
 
 from robinhood_bot.universe import (
+    Bar,
     Candidate,
     UniverseConfig,
+    average_true_range_pct,
     finalize_candidates,
     is_bullish_ma_trend,
     percentile_ranks,
     rank_by_scan,
+    realized_volatility,
     relative_strength_index,
 )
 
@@ -71,6 +74,42 @@ def test_candidate_fields():
     assert candidate.symbol == "AAPL"
     assert candidate.combined_rank == 0.9
     assert candidate.sector == "Technology"
+
+
+def test_bar_fields():
+    bar = Bar(high=101.0, low=99.0, close=100.0)
+    assert bar.high == 101.0
+    assert bar.low == 99.0
+    assert bar.close == 100.0
+
+
+def test_realized_volatility_of_constant_closes_is_zero():
+    assert realized_volatility([100.0, 100.0, 100.0, 100.0]) == 0.0
+
+
+def test_realized_volatility_too_few_points_is_zero():
+    assert realized_volatility([100.0]) == 0.0
+    assert realized_volatility([]) == 0.0
+
+
+def test_realized_volatility_known_value():
+    closes = [100.0, 102.0, 98.0, 101.0, 99.0]
+    assert realized_volatility(closes) == pytest.approx(0.5246239382982052)
+
+
+def test_average_true_range_pct_too_few_bars_is_zero():
+    assert average_true_range_pct([]) == 0.0
+    assert average_true_range_pct([Bar(101.0, 99.0, 100.0)]) == 0.0
+
+
+def test_average_true_range_pct_known_value():
+    bars = [
+        Bar(high=101.0, low=99.0, close=100.0),
+        Bar(high=103.0, low=100.0, close=102.0),
+        Bar(high=102.5, low=99.5, close=101.0),
+        Bar(high=104.0, low=100.5, close=103.0),
+    ]
+    assert average_true_range_pct(bars) == pytest.approx(0.030744336569579287)
 
 
 def test_relative_strength_index_insufficient_data_is_neutral():
@@ -250,6 +289,36 @@ class Candidate:
     rsi: float = 50.0
     ma_trend_bullish: bool | None = None
     golden_cross_bullish: bool | None = None
+
+
+@dataclass
+class Bar:
+    high: float
+    low: float
+    close: float
+
+
+def realized_volatility(closes: list[float]) -> float:
+    if len(closes) < 2:
+        return 0.0
+    returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+    if len(returns) < 2:
+        return 0.0
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    return math.sqrt(variance) * math.sqrt(252)
+
+
+def average_true_range_pct(bars: list[Bar]) -> float:
+    if len(bars) < 2:
+        return 0.0
+    true_ranges = []
+    for i in range(1, len(bars)):
+        high, low, prev_close = bars[i].high, bars[i].low, bars[i - 1].close
+        true_ranges.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    atr = sum(true_ranges) / len(true_ranges)
+    last_close = bars[-1].close
+    return (atr / last_close) if last_close else 0.0
 
 
 def relative_strength_index(closes: list[float], window_days: int = 14) -> float:

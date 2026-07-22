@@ -143,16 +143,21 @@ maintain, unlike the two-tier system this replaces.
 - Remove: `UniverseCache`, `SectorCache`, `CachedMember`,
   `load_cache`/`save_cache`, `load_sector_cache`/`save_sector_cache`,
   `is_cache_stale`, `refresh_membership`, `get_membership`, `get_sector`,
-  `rank_top_by_market_cap`, `realized_volatility`,
-  `average_true_range_pct`, `build_universe`, the `MarketDataClient`
-  protocol, and `Bar` — none of this is needed once there's no
-  membership cache and no market-cap/volatility fetch to do.
+  `rank_top_by_market_cap`, `build_universe`, and the `MarketDataClient`
+  protocol — none of this is needed once there's no membership cache and
+  no market-cap fetch to do.
 - Keep unchanged: `Candidate` (fields adjusted — `pct_change`/`rsi`
   replace `realized_vol`/`atr_pct` as the ranking-basis fields),
   `relative_strength_index`, `is_bullish_ma_trend`, `percentile_ranks`,
   `UniverseConfig` (fields adjusted to match: drop
   `top_n_sp500`/`top_n_nasdaq100`/`cache_max_age_days`/`ranking_mode`,
-  keep the RSI/MA/golden-cross window settings).
+  keep the RSI/MA/golden-cross window settings). **Also keep unchanged:
+  `Bar`, `realized_volatility`, `average_true_range_pct`** —
+  `backtest_commands.py` imports all three from `.universe` for its own,
+  separate `rank_candidates_as_of` (see Non-goals: that function is
+  explicitly untouched by this design). They're pure functions with no
+  dependency on the deleted membership/cache machinery, so keeping them
+  costs nothing and avoids breaking backtesting.
 - Add: `rank_by_scan(scan_rows: list[dict], cfg) -> list[dict]` (the
   percentile-rank + averaging step) and `finalize_candidates(rows:
   list[dict], closes_by_symbol: dict, cfg) -> list[Candidate]` (the

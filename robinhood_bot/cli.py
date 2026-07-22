@@ -10,13 +10,11 @@ from pathlib import Path
 from . import backtest_commands, commands, ledger
 from .backtest_data import HistoricalPriceStore
 from .risk_engine import RiskConfig
-from .universe import UniverseConfig, build_universe, is_bullish_ma_trend, relative_strength_index
-from .universe_client import LiveHistoricalDataFetcher, LiveMarketDataClient
+from .universe import UniverseConfig, finalize_candidates, is_bullish_ma_trend, rank_by_scan, relative_strength_index
+from .universe_client import LiveHistoricalDataFetcher
 
 LEDGER_PATH = Path("data/ledger.json")
 TRADE_LOG_PATH = Path("data/trade_log.csv")
-UNIVERSE_CACHE_PATH = Path("data/universe_cache.json")
-SECTOR_CACHE_PATH = Path("data/sector_cache.json")
 BACKTEST_BASE_DIR = Path("data/backtests")
 HISTORICAL_CACHE_DIR = Path("data/historical_price_cache")
 STARTING_CASH = 5_000.0
@@ -81,10 +79,9 @@ def _dispatch_backtest(args) -> dict:
         )
     if args.backtest_command == "run":
         store = _build_price_store()
-        candidates = build_universe(
-            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, SECTOR_CACHE_PATH, UniverseConfig(), date.today(),
-        )
-        candidate_sectors = {c.symbol: c.sector for c in candidates if c.sector is not None}
+        candidates = json.loads(args.candidates_json)
+        candidate_symbols = [c["symbol"] for c in candidates]
+        candidate_sectors = {c["symbol"]: c["sector"] for c in candidates if c.get("sector")}
         cfg_overrides = {}
         if args.slots is not None:
             cfg_overrides["max_active_positions"] = args.slots
@@ -93,7 +90,7 @@ def _dispatch_backtest(args) -> dict:
         run_cfg = RiskConfig(**cfg_overrides) if cfg_overrides else cfg
         return backtest_commands.cmd_backtest_run(
             args.run, BACKTEST_BASE_DIR, args.starting_cash, date.fromisoformat(args.start),
-            date.fromisoformat(args.end), [c.symbol for c in candidates], candidate_sectors, store, run_cfg,
+            date.fromisoformat(args.end), candidate_symbols, candidate_sectors, store, run_cfg,
             BENCHMARK_SYMBOL,
         )
     if args.backtest_command == "report":
@@ -138,8 +135,14 @@ def main(argv: list[str] | None = None) -> int:
     p_stop.add_argument("--apply", action="store_true")
 
     p_universe = sub.add_parser("universe")
-    p_universe.add_argument("--refresh", action="store_true")
-    p_universe.add_argument("--mode", choices=["realized_vol", "atr_pct", "both"], default=None)
+    universe_sub = p_universe.add_subparsers(dest="universe_command", required=True)
+
+    p_universe_rank = universe_sub.add_parser("rank")
+    p_universe_rank.add_argument("--scan-rows-json", required=True)
+
+    p_universe_finalize = universe_sub.add_parser("finalize")
+    p_universe_finalize.add_argument("--candidates-json", required=True)
+    p_universe_finalize.add_argument("--closes-json", default=None)
 
     p_backtest = sub.add_parser("backtest")
     backtest_sub = p_backtest.add_subparsers(dest="backtest_command", required=True)
@@ -196,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     p_bt_run.add_argument("--starting-cash", dest="starting_cash", type=float, default=STARTING_CASH)
     p_bt_run.add_argument("--slots", dest="slots", type=int, default=None)
     p_bt_run.add_argument("--weekly-profit-goal", dest="weekly_profit_goal", type=float, default=None)
+    p_bt_run.add_argument("--candidates-json", required=True)
 
     p_bt_report = backtest_sub.add_parser("report")
     p_bt_report.add_argument("--run", required=True)
@@ -228,22 +232,11 @@ def main(argv: list[str] | None = None) -> int:
                 golden_cross_by_symbol[symbol] = is_bullish_ma_trend(
                     closes, universe_cfg.golden_cross_short_window_days, universe_cfg.golden_cross_long_window_days
                 )
-        else:
-            market_client = LiveMarketDataClient()
-            lookback = max(
-                universe_cfg.rsi_window_days + 1, universe_cfg.ma_long_window_days,
-                universe_cfg.golden_cross_long_window_days,
-            ) + 5
-            for symbol in held_symbols:
-                bars = market_client.fetch_daily_bars(symbol, lookback)
-                closes = [bar.close for bar in bars]
-                rsi_by_symbol[symbol] = relative_strength_index(closes, universe_cfg.rsi_window_days)
-                ma_trend_by_symbol[symbol] = is_bullish_ma_trend(
-                    closes, universe_cfg.ma_short_window_days, universe_cfg.ma_long_window_days
-                )
-                golden_cross_by_symbol[symbol] = is_bullish_ma_trend(
-                    closes, universe_cfg.golden_cross_short_window_days, universe_cfg.golden_cross_long_window_days
-                )
+        # No --closes-json provided: leave indicators at neutral defaults
+        # rather than fetching live data from this network-free command.
+        # (rsi_by_symbol/ma_trend_by_symbol/golden_cross_by_symbol simply
+        # stay empty dicts here; cmd_state already treats a missing entry
+        # as "unknown" and applies its own neutral defaults downstream.)
         result = commands.cmd_state(
             LEDGER_PATH, STARTING_CASH, _parse_prices(args.prices_json), today, TRADING_MODE, cfg,
             rsi_by_symbol=rsi_by_symbol, ma_trend_by_symbol=ma_trend_by_symbol,
@@ -269,28 +262,30 @@ def main(argv: list[str] | None = None) -> int:
         result = _dispatch_backtest(args)
     else:
         universe_cfg = UniverseConfig()
-        if args.mode:
-            universe_cfg.ranking_mode = args.mode
-        candidates = build_universe(
-            LiveMarketDataClient(), UNIVERSE_CACHE_PATH, SECTOR_CACHE_PATH, universe_cfg, today, args.refresh
-        )
-        result = {
-            "candidates": [
-                {
-                    "symbol": c.symbol,
-                    "category": c.category,
-                    "market_cap": c.market_cap,
-                    "realized_vol": c.realized_vol,
-                    "atr_pct": c.atr_pct,
-                    "combined_rank": c.combined_rank,
-                    "sector": c.sector,
-                    "rsi": c.rsi,
-                    "ma_trend_bullish": c.ma_trend_bullish,
-                    "golden_cross_bullish": c.golden_cross_bullish,
-                }
-                for c in candidates
-            ]
-        }
+        if args.universe_command == "rank":
+            scan_rows = json.loads(args.scan_rows_json)
+            ranked = rank_by_scan(scan_rows, universe_cfg)
+            result = {"ranked": ranked}
+        else:
+            candidates_rows = json.loads(args.candidates_json)
+            closes_by_symbol = _parse_closes(args.closes_json)
+            candidates = finalize_candidates(candidates_rows, closes_by_symbol, universe_cfg)
+            result = {
+                "candidates": [
+                    {
+                        "symbol": c.symbol,
+                        "category": c.category,
+                        "market_cap": c.market_cap,
+                        "pct_change": c.pct_change,
+                        "combined_rank": c.combined_rank,
+                        "sector": c.sector,
+                        "rsi": c.rsi,
+                        "ma_trend_bullish": c.ma_trend_bullish,
+                        "golden_cross_bullish": c.golden_cross_bullish,
+                    }
+                    for c in candidates
+                ]
+            }
 
     print(json.dumps(result, indent=2))
     return 0

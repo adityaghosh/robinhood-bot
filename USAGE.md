@@ -1,9 +1,10 @@
 # Using robinhood-bot
 
 An LLM-assisted short-term trading bot for a curated universe of
-well-established stocks (top ~100 S&P 500 + top ~20 Nasdaq-100 by market
-cap) plus leveraged broad-market index funds (TQQQ, UPRO) — no leveraged
-sector funds — pursuing a monthly return target. Claude Code is the
+large-cap, liquid stocks (sourced from a saved Robinhood scan, ranked by
+% change and RSI, gated by revenue growth) plus leveraged broad-market
+index funds (TQQQ, UPRO) — no leveraged sector funds — pursuing a
+monthly return target. Claude Code is the
 decision-making agent; Python
 enforces every hard risk limit and Claude cannot override a rejected
 trade. Starts in paper mode (simulated fills against real, live prices)
@@ -123,21 +124,26 @@ the first, cold-cache run for a given date range and symbol set — see
 python -m robinhood_bot.cli backtest trading-days --start 2026-01-01 --end 2026-06-30
 
 # Run it. Each --run id gets its own isolated ledger, so you can run
-# multiple backtests side by side without them interfering.
-python -m robinhood_bot.cli backtest run --run jan-jun-2026 --start 2026-01-01 --end 2026-06-30
+# multiple backtests side by side without them interfering. --candidates-json
+# is required -- a JSON array of {"symbol": ..., "sector": ... or null} -- the
+# command no longer fetches a candidate list itself (see below).
+python -m robinhood_bot.cli backtest run --run jan-jun-2026 --start 2026-01-01 --end 2026-06-30 --candidates-json '[{"symbol": "AAPL", "sector": "Electronic Technology"}, {"symbol": "TQQQ", "sector": null}]'
 
 # Summarize: total return, max drawdown, win/loss count, and a
 # buy-and-hold-SPY benchmark for the same window.
 python -m robinhood_bot.cli backtest report --run jan-jun-2026
 ```
 
-The deterministic run always trades within *today's* live candidate
-universe (top S&P 500 + Nasdaq-100 + leveraged funds), applied
+`backtest run` takes whatever candidate list you pass it and applies it
 retroactively across the whole historical window — not the universe as
 it actually existed on each past date. This is a known, accepted
 simplification (survivorship bias), not a bug; see
 `docs/superpowers/specs/2026-07-19-backtesting-design.md` for the full
-rationale and other non-goals.
+rationale and other non-goals. In practice that list is usually a
+snapshot of today's live candidates — e.g. run the `universe rank`/
+`universe finalize` sequence described under "Manual CLI reference"
+below once and reuse its output — but the command itself is now
+network-free and has no opinion on how you produced it.
 
 **LLM-driven backtest** — runs the actual daily-cycle skill's research
 and decision logic (the same judgment `/robinhood-trading` uses live),
@@ -205,11 +211,13 @@ skill. All commands print JSON to stdout.
 # to just check holdings/mode (positions come back marked stale).
 python -m robinhood_bot.cli state --prices-json "{}"
 
-# Ranked candidate universe (top S&P 500 + top Nasdaq-100 + leveraged
-# funds, by market cap, ranked by volatility). Cached weekly by default.
-python -m robinhood_bot.cli universe
-python -m robinhood_bot.cli universe --refresh
-python -m robinhood_bot.cli universe --mode realized_vol   # or atr_pct, both
+# Ranked candidate universe: large-cap + liquid stocks from a saved
+# Robinhood scan, ranked by a blend of % change and RSI, gated by a
+# revenue-growth filter. Always real-time -- no cache, no --refresh.
+# Both commands are network-free; the caller (the daily-cycle skill,
+# manually, or a script) supplies the scan/financials/historicals data.
+python -m robinhood_bot.cli universe rank --scan-rows-json '[...]'
+python -m robinhood_bot.cli universe finalize --candidates-json '[...]' --closes-json '{...}'
 
 # Ask whether a trade would be allowed, without executing it.
 python -m robinhood_bot.cli risk-check buy AAPL --value 1500 --prices-json "{\"AAPL\": 189.50}"
@@ -237,8 +245,6 @@ history, not something the repo tracks:
 
 - `data/ledger.json` — current portfolio state (cash, positions, month).
 - `data/trade_log.csv` — append-only audit trail of every fill.
-- `data/universe_cache.json` — cached index membership + market caps,
-  refreshed weekly.
 - `data/backtests/<run_id>/` — one isolated `ledger.json`, `trade_log.csv`,
   and `equity_curve.csv` per backtest run, keyed by the `--run` id you
   chose. Never touches the live `data/ledger.json`.
@@ -250,10 +256,12 @@ history, not something the repo tracks:
 ## Current status
 
 - Core engine, universe ranking, both skills, and backtesting are built
-  and tested (`pytest` — currently 233 tests, all local/network-free
-  except the live Wikipedia/yfinance-touching classes in
-  `universe_client.py`, which are verified manually rather than by
-  automated test).
+  and tested (`pytest` — all local/network-free; run `pytest -q` for the
+  current count). Universe building sources live data from a Robinhood
+  scan (see `docs/superpowers/specs/2026-07-21-scan-based-universe-design.md`)
+  instead of the yfinance/Wikipedia scrape the original design used —
+  `universe_client.py` now only contains `LiveHistoricalDataFetcher`,
+  used solely by backtesting.
 - Robinhood's Agentic Trading MCP is connected, and both skills are
   wired to its confirmed tool names for account resolution, quotes/
   historicals, and live-mode order placement/fill-confirmation (see
