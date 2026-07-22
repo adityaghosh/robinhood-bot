@@ -1,40 +1,44 @@
 # robinhood-bot
 
-Paper-trading bot scaffold. No live Robinhood account connection — this simulates
-trades against real market data (via `yfinance`) using a virtual cash balance,
-so a strategy can be developed and evaluated before anyone considers connecting
-it to a real brokerage account.
+An LLM-assisted short-term trading bot for a curated universe of
+large-cap, liquid stocks (sourced from a saved Robinhood scan, ranked by
+% change and RSI, gated by revenue growth) plus leveraged broad-market
+index funds (TQQQ, UPRO), pursuing a monthly return target. Claude Code
+is the decision-making agent; Python enforces every hard risk limit and
+Claude cannot override a rejected trade. Starts in paper mode (simulated
+fills against real, live prices) with a one-line switch to live trading
+once trusted.
+
+See **[USAGE.md](USAGE.md)** for setup, the daily-cycle/stop-loss-sweep
+skills, backtesting, the risk limits, and everything else needed to
+actually run this.
 
 ## Layout
 
 ```
 robinhood_bot/
-  config.py            # runtime settings (symbols, timeframe, starting cash)
-  data_feed.py          # pulls historical/live-ish price bars via yfinance
-  paper_broker.py        # simulated broker: tracks cash, positions, fills orders
-  portfolio.py            # position/equity accounting
-  strategies/
-    base.py               # Strategy interface
-    moving_average.py      # SMA crossover example strategy
-  runner.py                # wires data feed -> strategy -> paper broker, loops
-  main.py                   # CLI entry point
-tests/
-  test_moving_average.py
-data/                        # cached price data / trade logs (gitignored)
-```
-
-## Quickstart
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
-python -m robinhood_bot.main --symbol AAPL --fast 10 --slow 30
+  cli.py                  # network-free CLI: state, risk-check, record-fill,
+                           # check-stop-losses, universe rank/finalize, backtest ...
+  commands.py              # cli.py's command implementations
+  risk_engine.py            # hard risk limits (stop-loss, position sizing,
+                             # sector concentration, profit banking, ...)
+  universe.py                # candidate ranking (percentile-rank math,
+                              # MA-trend/golden-cross attachment)
+  universe_client.py          # LiveHistoricalDataFetcher (yfinance, backtesting only)
+  ledger.py                    # portfolio state persistence
+  portfolio_state.py            # Position/PortfolioState data model
+  backtest_commands.py           # deterministic + LLM-driven backtest support
+  backtest_data.py                # historical price cache for backtesting
+.claude/skills/
+  robinhood-trading/               # daily research-and-trade cycle skill
+  robinhood-stop-loss-sweep/        # mechanical intraday safety-net sweep skill
+docs/superpowers/
+  specs/, plans/                     # design docs and implementation plans
+tests/                                # pytest suite, network-free
+data/                                  # local trading state (gitignored)
 ```
 
 ## Status
 
-Simulation only. There is no code here that places real orders or touches a
-real brokerage account/credentials. If you later want to connect to a real
-Robinhood account, that's a separate, deliberate step (unofficial API,
-credential handling, MFA) — not something this scaffold does automatically.
+Paper mode by default — see USAGE.md's "Current status" section for what's
+built, what's connected, and what's still manual.

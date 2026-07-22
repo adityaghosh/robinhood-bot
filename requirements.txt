@@ -1,4 +1,2 @@
 yfinance>=0.2.40
-pandas>=2.0
-lxml>=5.0
 pytest>=8.0
