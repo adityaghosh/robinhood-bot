@@ -19,6 +19,28 @@ e.g. `--prices-json '{\"AAPL\": 189.50, \"MSFT\": 310.25}'`. The empty
 `--prices-json "{}"` used in Step 1 has no inner quotes to strip, so it
 works as-is.
 
+**Google Drive is the source of truth for `data/ledger.json` and
+`data/trade_log.csv`, not the local copy** — this sweep and the daily
+cycle both read/write the same Drive-backed ledger, whether either one
+runs locally or from a scheduled cloud routine. Never skip Step 0 or the
+final sync step below, even for a manual local run.
+
+## Step 0 — Sync the ledger down from Drive
+
+Same `robinhood-bot-ledger` Drive folder the daily cycle uses (id
+`1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35`, confirmed — re-resolve by search if
+it ever 404s): `search_files` with query `title = 'ledger.json' and
+parentId = '1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35'` (and the same for
+`trade_log.csv`). There's no update-in-place tool, so a search can
+return several same-named files — take the one with the latest
+`createdTime`. If found, `download_file_content` that file's `id`,
+base64-decode `content`, and overwrite the local `data/ledger.json` /
+`data/trade_log.csv`. If missing (only possible if this sweep somehow
+runs before the daily cycle ever has), leave the local files absent and
+let `cli.py` bootstrap fresh ones as usual.
+
+Do not proceed to Step 1 until this sync has resolved.
+
 ## Step 1 — Read current holdings
 
 ```
@@ -126,3 +148,23 @@ Entries with `"action": "SKIP"` or `"action": "HOLD"` need no action.
 One or two lines: what (if anything) was sold and why, and the current
 cash/active-position count after this sweep. No further analysis —
 that's the daily cycle's job, not this one.
+
+## Step 6 — Sync the ledger back up to Drive
+
+For each of `data/ledger.json` and `data/trade_log.csv`: read its
+current local content and call `create_file` with `parentId:
+'1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35'`, the matching `title`, `textContent`
+set to the file's full current text, `contentMimeType`
+(`application/json` / `text/csv`), and `disableConversionToGoogleType:
+true` (otherwise Drive converts it to a Google Docs/Sheets file that
+Step 0 can't read back the same way). This creates a new file object
+each time rather than updating one in place — Step 0 always picks the
+newest by `createdTime`, so the accumulating older snapshots are inert,
+not a correctness problem. Do this even if nothing was sold this sweep —
+always the last action, on every exit path, so the next run (this
+sweep, the daily cycle, local or cloud) picks up current state rather
+than a stale copy.
+
+This sweep and the daily cycle should never run concurrently — Drive
+has no locking, so overlapping writers would silently clobber each
+other.

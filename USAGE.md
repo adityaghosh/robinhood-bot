@@ -51,7 +51,31 @@ renames or changes the shape of any of these, update
 `.claude/skills/robinhood-trading/SKILL.md` /
 `.claude/skills/robinhood-stop-loss-sweep/SKILL.md` to match.
 
-**3. Confirm you're in paper mode**
+**3. Connect Google Drive, for ledger persistence across scheduled runs**
+
+`data/ledger.json` and `data/trade_log.csv` are gitignored (deliberately
+— see "Where your data lives" below), so a scheduled cloud routine,
+which gets a fresh git checkout on every firing, has no way to see
+yesterday's portfolio state unless it lives somewhere outside the repo.
+Connect Google Drive at https://claude.ai/customize/connectors — both
+skills sync the ledger to/from a dedicated Drive folder as their first
+and last step, whether run locally or from a cloud routine, so there's
+one consistent history regardless of where a given cycle actually ran.
+
+The folder is `robinhood-bot-ledger` in the connected account's Drive
+root — id `1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35`, already created and
+seeded with a fresh ledger (`$5,000` starting cash, no positions) and an
+empty trade log:
+https://drive.google.com/drive/folders/1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35
+
+There's no update-in-place file tool in this MCP, so every sync-up
+creates a new file object with the same name rather than overwriting —
+the folder accumulates one snapshot per run, and sync-down always reads
+back whichever one is newest. Harmless, but if it bothers you, there's
+no delete tool to clean it up from either skill — do it by hand at the
+link above.
+
+**4. Confirm you're in paper mode**
 
 ```bash
 python -m robinhood_bot.cli state --prices-json "{}"
@@ -266,7 +290,14 @@ history, not something the repo tracks:
   wired to its confirmed tool names for account resolution, quotes/
   historicals, and live-mode order placement/fill-confirmation (see
   "Connect Robinhood's Agentic Trading MCP server" above).
-- **Not yet done:** a first manual paper-mode run to validate the whole
-  loop end to end, and scheduled/automated invocation (see "Automating
-  the cadence" above — both skills are still manual-only). See
+- Google Drive is connected, and both skills sync `data/ledger.json` /
+  `data/trade_log.csv` to a dedicated Drive folder as their first and
+  last step, so state persists whether a given cycle ran locally or from
+  a scheduled cloud routine (see "Connect Google Drive" above). The
+  folder is seeded with a fresh ledger — no manual run has touched it
+  yet.
+- **Not yet done:** a first real (local or cloud) paper-mode run to
+  validate the whole loop end to end, and scheduled/automated invocation
+  (see "Automating the cadence" above — both skills are wired for cloud
+  scheduling but no routine has been created yet). See
   `docs/superpowers/plans/` for what's deliberately deferred and why.

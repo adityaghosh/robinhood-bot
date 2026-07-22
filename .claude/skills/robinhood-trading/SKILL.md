@@ -20,6 +20,43 @@ backslash-escaped, e.g. `--prices-json '{\"AAPL\": 189.50, \"MSFT\":
 310.25}'`. The empty `--prices-json "{}"` used in Step 1 has no inner
 quotes to strip, so it works as-is.
 
+**Google Drive is the source of truth for `data/ledger.json` and
+`data/trade_log.csv`, not the local copy.** This runs the same whether
+invoked locally or from a scheduled cloud routine, since either one
+could be the one that ran most recently. Never skip Step 0 or Step 10
+below, even for a manual local run.
+
+## Step 0 — Sync the ledger down from Drive
+
+The ledger folder is `robinhood-bot-ledger` in the account's Drive root
+(folder id `1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35`, confirmed — but re-resolve
+it by search if this ever 404s, e.g. after a manual reorganization,
+rather than assuming the id is permanent):
+
+1. `search_files` with query `title = 'ledger.json' and parentId =
+   '1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35'` (and the same for
+   `trade_log.csv`). **There is no update-in-place tool** — every past
+   sync-up created a new file object with the same name, so a search can
+   return several. If `files` has more than one entry, take the one with
+   the latest `createdTime`; ignore the rest.
+2. **If found:** `download_file_content` with that file's `id`, base64-
+   decode the returned `content`, and write it over the local
+   `data/ledger.json` / `data/trade_log.csv` — the local copies are just
+   this run's working cache, Drive always wins.
+3. **If missing** (first-ever run, or the folder had to be recreated):
+   leave the corresponding local file absent. `cli.py` bootstraps a
+   fresh `ledger.json` (starting cash, no positions) the first time any
+   command touches it, and `trade_log.csv` gets its header on the first
+   recorded fill — Step 10 below uploads whatever this run produces as
+   Drive's new baseline. (If the folder itself is missing, recreate it
+   with `create_file`, `title: 'robinhood-bot-ledger'`, `contentMimeType:
+   'application/vnd.google-apps.folder'`, `disableConversionToGoogleType:
+   true`.)
+
+Do not proceed to Step 1 until this sync has resolved one way or the
+other — running Step 1 against a stale or missing local ledger without
+attempting the Drive sync first defeats the whole point.
+
 ## Step 1 — Read mode & current holdings
 
 ```
@@ -356,6 +393,38 @@ the user:
   gains" figure, distinct from tradeable `cash`.
 - Anything that failed or was skipped (a quote that didn't come back, an
   order that failed to place), stated plainly.
+
+## Step 10 — Sync the ledger back up to Drive
+
+For each of `data/ledger.json` and `data/trade_log.csv`: read its
+current local content and call `create_file` with `parentId:
+'1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35'`, the matching `title` (`ledger.json`
+/ `trade_log.csv`), `textContent` set to the file's full current text,
+`contentMimeType` (`application/json` / `text/csv`), and
+`disableConversionToGoogleType: true` (otherwise Drive silently converts
+it to a Google Docs/Sheets file, which Step 0's `download_file_content`
+can't read back the same way). This **creates a new file object each
+time** rather than overwriting one in place — there is no update tool —
+so the folder accumulates one snapshot per sync. That's expected: Step
+0 always picks the newest by `createdTime`, so older snapshots are
+harmless dead weight, not a correctness problem. If the accumulation
+ever bothers you, clean old ones up manually at
+`https://drive.google.com/drive/folders/1hcKGJ7vpj8JiOhlE5930EYQiFMyNwq35`
+— there's no delete tool available to do it from here.
+
+Do this even if no trades were made this cycle — week/month rollovers
+still change the ledger's state and need to reach Drive.
+
+**This step is not optional and not skippable on any exit path** — if
+Step 0 through Step 9 completed (including a cycle where every proposed
+trade was skipped or rejected), this upload must still run, so the next
+invocation (local or cloud) picks up this cycle's state instead of an
+older one.
+
+Two runs should never overlap in time (this cycle and the stop-loss
+sweep, or two manual/cloud runs of the same skill) — Drive has no
+locking, so a second writer mid-cycle would silently clobber the first
+one's upload with whichever finishes last.
 
 ## Backtest Mode
 
